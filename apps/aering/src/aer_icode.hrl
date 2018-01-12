@@ -12,3 +12,4 @@
 
 -record(var_ref, { name :: string()}).
 
+-record(integer, {value :: integer()}).

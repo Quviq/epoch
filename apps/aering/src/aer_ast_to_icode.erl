@@ -59,7 +59,9 @@ ast_args([], Acc) -> lists:reverse(Acc).
 
 ast_body({id, _, Name},_Icode) ->
     %% TODO Look up id in env
-    #var_ref{name = Name}.
+    #var_ref{name = Name};
+ast_body({int, _, Value},_) ->
+    #integer{value = Value}.
     
 
 ast_fun_to_icode(Name, Args, Body, #{functions := Funs} = Icode) ->

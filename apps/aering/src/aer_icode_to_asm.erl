@@ -36,12 +36,21 @@ assemble([{Name, Args, Body}|More], #{frame_size := FS
     assemble(More, NewEnv, BodyCode);
 assemble([], Env, Code) -> {Env, Code}.
 
-
+%% TODO:
+%%   Why are we (a) passing Code around so we can add to it, and (b) storing it
+%%   in forwards order, so instructions have to be added by append???
 assemble_body({var_ref, Id}, #{sp := SP} = Env, Code) ->
     SL = lookup_var(Id, Env),
     Instr = aeb_opcodes:mnemonic(?DUP1 + SP + SL),
     NewEnv = inc_sp(Env),
-    {Code ++ [Instr], NewEnv}.
+    {Code ++ [Instr], NewEnv};
+assemble_body({integer, N}, Env, Code) ->
+    %% TODO: assume N is non-negative for now.
+    true = N >= 0;
+    Bytes = binary:encode_unsigned(N),
+    Instr = aeb_opcodes:mnemonic(?PUSH1 + size(Bytes)-1),
+    NewEnv = inc_sp(Env),
+    {Code ++ [Instr] ++ binary_to_list(Bytes), NewEnv}.
 
 inc_sp( #{sp := SP} = Env ) ->  Env#{ sp => SP + 1}.
 
