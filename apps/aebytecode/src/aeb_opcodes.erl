@@ -432,4 +432,6 @@ m_to_op('CALLBLACKBOX')   -> ?CALLBLACKBOX   ;
 m_to_op('STATICCALL')     -> ?STATICCALL     ;
 m_to_op('REVERT')         -> ?REVERT         ;
 m_to_op('COMMENT')        -> ?COMMENT        ;
-m_to_op('SUICIDE')        -> ?SUICIDE        .
+m_to_op('SUICIDE')        -> ?SUICIDE        ;
+m_to_op(Data) when 0=<Data, Data=<255
+	      	          -> Data            .
