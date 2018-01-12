@@ -32,8 +32,8 @@ file(Filename, Options) ->
 
 
 
-parse(_Filename, Options) ->
-    C = read_contract(identity),
+parse(Filename, Options) ->
+    C = read_contract(Filename),
     ok = pp_ring_code(C, Options),
     parse_string(C).
     
