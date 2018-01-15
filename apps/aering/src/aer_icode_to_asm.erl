@@ -222,6 +222,13 @@ live_code(Jumps,['JUMP'|More]) ->
     ['JUMP'|dead_code(Jumps,More)];
 live_code(Jumps,['STOP'|More]) ->
     ['STOP'|dead_code(Jumps,More)];
+live_code(Jumps,[{'JUMPDEST',Lab}|More]) ->
+    case lists:member(Lab,Jumps) of
+	true ->
+	    [{'JUMPDEST',Lab}|live_code(Jumps,More)];
+	false ->
+	    live_code(Jumps,More)
+    end;
 live_code(Jumps,[I|More]) ->
     [I|live_code(Jumps,More)];
 live_code(_,[]) ->
