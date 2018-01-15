@@ -56,7 +56,60 @@ assemble_function(Funs,Name,Args,Body) ->
 assemble_expr(_Funs,Stack,{var_ref,Id}) ->
     dup(lookup_var(Id,Stack));
 assemble_expr(_Funs,_Stack,{integer,N}) ->
-    push(N).
+    push(N);
+assemble_expr(Funs,Stack,{binop,'&&',A,B}) ->
+    assemble_expr(Funs,Stack,{ifte,A,B,{integer,0}});
+assemble_expr(Funs,Stack,{binop,'||',A,B}) ->
+    assemble_expr(Funs,Stack,{ifte,A,{integer,1},B});
+assemble_expr(Funs,Stack,{binop,Op,A,B}) ->
+    %% EEVM binary instructions take their first argument from the top
+    %% of the stack, so to get operands on the stack in the right
+    %% order, we evaluate from right to left.
+    [assemble_expr(Funs,Stack,B),
+     assemble_expr(Funs,[dummy|Stack],A),
+     assemble_infix(Op)];
+assemble_expr(Funs,Stack,{ifte,Decision,Then,Else}) ->
+    Close = make_ref(),
+    ThenL  = make_ref(),
+    ElseL  = make_ref(),
+    [assemble_decision(Funs,Stack,Decision,ThenL,ElseL),
+     {?JUMPDEST,ElseL},
+     assemble_expr(Funs,Stack,Else),
+     {push_label,Close},
+     ?JUMP,
+     {?JUMPDEST,ThenL},
+     assemble_expr(Funs,Stack,Then),
+     {?JUMPDEST,Close}
+    ].
+
+assemble_decision(Funs,Stack,{binop,'&&',A,B},Then,Else) ->
+    Label = make_ref(),
+    [assemble_decision(Funs,Stack,A,Label,Else),
+     {?JUMPDEST,Label},
+     assemble_decision(Funs,Stack,B,Then,Else)];
+assemble_decision(Funs,Stack,{binop,'||',A,B},Then,Else) ->
+    Label = make_ref(),
+    [assemble_decision(Funs,Stack,A,Then,Label),
+     {?JUMPDEST,Label},
+     assemble_decision(Funs,Stack,B,Then,Else)];
+assemble_decision(Funs,Stack,Decision,Then,Else) ->
+    [assemble_expr(Funs,Stack,Decision),
+     {push_label,Then}, ?JUMPI,
+     {push_label,Else}, ?JUMP].
+
+assemble_infix('+') -> ?ADD;
+assemble_infix('-') -> ?SUB;
+assemble_infix('*') -> ?MUL;
+assemble_infix('/') -> ?SDIV;
+assemble_infix('bor') -> ?OR;
+assemble_infix('band') -> ?AND;
+assemble_infix('bxor') -> ?XOR;
+assemble_infix('<') -> ?SLT;    %% comparisons are SIGNED
+assemble_infix('>') -> ?SGT;
+assemble_infix('==') -> ?EQ;
+assemble_infix('<=') -> [?SGT,?ISZERO];
+assemble_infix('>=') -> [?SLT,?ISZERO];
+assemble_infix('!=') -> [?EQ,?ISZERO].
 
 lookup_fun(Funs,Name,Arity) ->
     case [Ref || {Name1,Arity1,Ref} <- Funs,

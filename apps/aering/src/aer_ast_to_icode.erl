@@ -42,7 +42,7 @@ contract_to_icode([{letfun,_Attrib, Name, Args,_What, Body}|Rest], Icode) ->
     %% TODO: push funname to env
     FunArgs = ast_args(Args, []),
     %% TODO: push args to env
-    FunBody = ast_body(Body, Icode),
+    FunBody = ast_body(Body),
     NewIcode = ast_fun_to_icode(FunName, FunArgs, FunBody, Icode),
     contract_to_icode(Rest, NewIcode);
 contract_to_icode([], Icode) -> Icode;
@@ -57,11 +57,17 @@ ast_args([{arg, _, Name, Type}|Rest], Acc) ->
 ast_args([], Acc) -> lists:reverse(Acc).
                                  
 
-ast_body({id, _, Name},_Icode) ->
+ast_body({id, _, Name}) ->
     %% TODO Look up id in env
     #var_ref{name = Name};
-ast_body({int, _, Value},_) ->
-    #integer{value = Value}.
+ast_body({int, _, Value}) ->
+    #integer{value = Value};
+ast_body({app,[_,{format,infix}],{Op,_},[A,B]}) ->
+    #binop{op = Op, left = ast_body(A), right = ast_body(B)};
+ast_body({'if',_,Dec,Then,Else}) ->
+    #ifte{decision = ast_body(Dec)
+	 ,then     = ast_body(Then)
+	 ,else     = ast_body(Else)}.
     
 
 ast_fun_to_icode(Name, Args, Body, #{functions := Funs} = Icode) ->

@@ -13,3 +13,11 @@
 -record(var_ref, { name :: string()}).
 
 -record(integer, {value :: integer()}).
+
+-record(binop,   { op   :: term()
+		 , left :: expr()
+		 , right :: expr()}).
+
+-record(ifte,    { decision :: expr()
+		 , then :: expr()
+		 , else :: expr()}).
