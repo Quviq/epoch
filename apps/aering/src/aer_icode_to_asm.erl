@@ -187,11 +187,15 @@ use_labels(_,I) ->
 optimize_jumps(Code) ->
     JJs = jumps_to_jumps(Code),
     ShortCircuited = [short_circuit_jumps(JJs,Instr) || Instr <- Code],
-    eliminate_dead_code(ShortCircuited).
-    %%ShortCircuited.
+    NoDeadCode = eliminate_dead_code(ShortCircuited),
+    MovedCode = merge_blocks(moveable_blocks(NoDeadCode)),
+    %% Moving code may have made some labels superfluous.
+    eliminate_dead_code(MovedCode).  
 
 jumps_to_jumps([{'JUMPDEST',Label},{push_label,Target},'JUMP'|More]) ->
     [{Label,Target}|jumps_to_jumps(More)];
+jumps_to_jumps([{'JUMPDEST',Label},{'JUMPDEST',Target}|More]) ->
+    [{Label,Target}|jumps_to_jumps([{'JUMPDEST',Target}|More])];
 jumps_to_jumps([_|More]) ->
     jumps_to_jumps(More);
 jumps_to_jumps([]) ->
@@ -210,7 +214,6 @@ short_circuit_jumps(_JJs,Instr) ->
 
 eliminate_dead_code(Code) ->
     Jumps = lists:usort([Lab || {push_label,Lab} <- Code]),
-    Labels = lists:usort([Lab || {'JUMPDEST',Lab} <- Code]),
     NewCode = live_code(Jumps,Code),
     if Code==NewCode ->
 	    Code;
@@ -241,8 +244,72 @@ dead_code(Jumps,[{'JUMPDEST',Lab}|More]) ->
 	false ->
 	    dead_code(Jumps,More)
     end;
-dead_code(Jumps,[I|More]) ->
+dead_code(Jumps,[_I|More]) ->
     dead_code(Jumps,More);
 dead_code(_,[]) ->
     [].
 
+%% Split the code into "moveable blocks" that control flow only
+%% reaches via jumps.
+moveable_blocks([]) ->
+    [];
+moveable_blocks([I]) ->
+    [[I]];
+moveable_blocks([Jump|More]) when Jump=='JUMP'; Jump=='STOP' ->
+    [[Jump]|moveable_blocks(More)];
+moveable_blocks([I|More]) ->
+    [Block|MoreBlocks] = moveable_blocks(More),
+    [[I|Block]|MoreBlocks].
+
+%% Merge blocks to eliminate jumps where possible.
+merge_blocks(Blocks) ->
+    BlocksAndTargets = [label_and_jump(B) || B <- Blocks],
+    [I || {Pref,Body,Suff} <- merge_after(BlocksAndTargets),
+	  I <- Pref++Body++Suff].
+
+%% Merge the first block with other blocks that come after it
+merge_after(All=[{Label,Body,[{push_label,Target},'JUMP']}|BlocksAndTargets]) ->
+    case [{B,J} || {[{'JUMPDEST',L}],B,J} <- BlocksAndTargets,
+		   L == Target] of
+	[{B,J}|_] ->
+	    merge_after([{Label,Body++[{'JUMPDEST',Target}]++B,J}|
+			 lists:delete({[{'JUMPDEST',Target}],B,J},
+				      BlocksAndTargets)]);
+	[] ->
+	    merge_before(All)
+    end;
+merge_after(All) ->
+    merge_before(All).
+
+%% The first block cannot be merged with any blocks that it jumps
+%% to... but maybe it can be merged with a block that jumps to it!
+merge_before([Block={[{'JUMPDEST',Label}],Body,Jump}|BlocksAndTargets]) ->
+    case [{L,B,T} || {L,B,[{push_label,T},'JUMP']} <- BlocksAndTargets,
+		     T == Label] of
+	[{L,B,T}|_] ->
+	    merge_before([{L,B++[{'JUMPDEST',Label}]++Body,Jump}
+			  |lists:delete({L,B,[{push_label,T},'JUMP']},BlocksAndTargets)]);
+	_ ->
+	    [Block | merge_after(BlocksAndTargets)]
+    end;
+merge_before([Block|BlocksAndTargets]) ->
+    [Block | merge_after(BlocksAndTargets)];
+merge_before([]) ->
+    [].
+
+%% Convert each block to a PREFIX, which is a label or empty, a
+%% middle, and a SUFFIX which is a JUMP to a label, or empty.
+label_and_jump(B) ->
+    {Label,B1} = case B of
+		     [{'JUMPDEST',L}|More1] ->
+			 {[{'JUMPDEST',L}],More1};
+		     _ ->
+			 {[],B}
+		 end,
+    {Target,B2} = case lists:reverse(B1) of
+		      ['JUMP',{push_label,T}|More2] ->
+			  {[{push_label,T},'JUMP'],lists:reverse(More2)};
+		      _ ->
+			  {[],B1}
+		  end,
+    {Label,B2,Target}.
