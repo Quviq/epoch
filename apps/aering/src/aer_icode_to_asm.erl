@@ -28,11 +28,11 @@ convert(#{ contract_name := _ContractName
     DummyCode = [%% push a return address to stop
 		 {push_label,StopLabel},
 		 %% swap argument to the top of the stack
-		 ?SWAP1,
+		 aeb_opcodes:mnemonic(?SWAP1),
 		 {push_label,MainFunction},
-		 ?JUMP,
-		 {?JUMPDEST,StopLabel},
-		 ?STOP
+		 aeb_opcodes:mnemonic(?JUMP),
+		 {aeb_opcodes:mnemonic(?JUMPDEST),StopLabel},
+		 aeb_opcodes:mnemonic(?STOP)
 		],
    
     %% Code is a deep list of instructions, containing labels and
@@ -45,13 +45,13 @@ convert(#{ contract_name := _ContractName
 	 Code]).
 
 assemble_function(Funs,Name,Args,Body) ->
-    [{?JUMPDEST,lookup_fun(Funs,Name,length(Args))},
+    [{aeb_opcodes:mnemonic(?JUMPDEST),lookup_fun(Funs,Name,length(Args))},
      assemble_expr(Funs, lists:reverse(Args), Body),
      %% swap return value and first argument
      [swap(length(Args)) || Args/=[]],
-     [?POP || _ <- Args],
+     [aeb_opcodes:mnemonic(?POP) || _ <- Args],
      swap(1),
-     ?JUMP].
+     aeb_opcodes:mnemonic(?JUMP)].
 
 assemble_expr(_Funs,Stack,{var_ref,Id}) ->
     dup(lookup_var(Id,Stack));
@@ -73,43 +73,43 @@ assemble_expr(Funs,Stack,{ifte,Decision,Then,Else}) ->
     ThenL  = make_ref(),
     ElseL  = make_ref(),
     [assemble_decision(Funs,Stack,Decision,ThenL,ElseL),
-     {?JUMPDEST,ElseL},
+     {aeb_opcodes:mnemonic(?JUMPDEST),ElseL},
      assemble_expr(Funs,Stack,Else),
      {push_label,Close},
-     ?JUMP,
-     {?JUMPDEST,ThenL},
+     aeb_opcodes:mnemonic(?JUMP),
+     {aeb_opcodes:mnemonic(?JUMPDEST),ThenL},
      assemble_expr(Funs,Stack,Then),
-     {?JUMPDEST,Close}
+     {aeb_opcodes:mnemonic(?JUMPDEST),Close}
     ].
 
 assemble_decision(Funs,Stack,{binop,'&&',A,B},Then,Else) ->
     Label = make_ref(),
     [assemble_decision(Funs,Stack,A,Label,Else),
-     {?JUMPDEST,Label},
+     {aeb_opcodes:mnemonic(?JUMPDEST),Label},
      assemble_decision(Funs,Stack,B,Then,Else)];
 assemble_decision(Funs,Stack,{binop,'||',A,B},Then,Else) ->
     Label = make_ref(),
     [assemble_decision(Funs,Stack,A,Then,Label),
-     {?JUMPDEST,Label},
+     {aeb_opcodes:mnemonic(?JUMPDEST),Label},
      assemble_decision(Funs,Stack,B,Then,Else)];
 assemble_decision(Funs,Stack,Decision,Then,Else) ->
     [assemble_expr(Funs,Stack,Decision),
-     {push_label,Then}, ?JUMPI,
-     {push_label,Else}, ?JUMP].
+     {push_label,Then}, aeb_opcodes:mnemonic(?JUMPI),
+     {push_label,Else}, aeb_opcodes:mnemonic(?JUMP)].
 
-assemble_infix('+') -> ?ADD;
-assemble_infix('-') -> ?SUB;
-assemble_infix('*') -> ?MUL;
-assemble_infix('/') -> ?SDIV;
-assemble_infix('bor') -> ?OR;
-assemble_infix('band') -> ?AND;
-assemble_infix('bxor') -> ?XOR;
-assemble_infix('<') -> ?SLT;    %% comparisons are SIGNED
-assemble_infix('>') -> ?SGT;
-assemble_infix('==') -> ?EQ;
-assemble_infix('<=') -> [?SGT,?ISZERO];
-assemble_infix('>=') -> [?SLT,?ISZERO];
-assemble_infix('!=') -> [?EQ,?ISZERO].
+assemble_infix('+') -> aeb_opcodes:mnemonic(?ADD);
+assemble_infix('-') -> aeb_opcodes:mnemonic(?SUB);
+assemble_infix('*') -> aeb_opcodes:mnemonic(?MUL);
+assemble_infix('/') -> aeb_opcodes:mnemonic(?SDIV);
+assemble_infix('bor') -> aeb_opcodes:mnemonic(?OR);
+assemble_infix('band') -> aeb_opcodes:mnemonic(?AND);
+assemble_infix('bxor') -> aeb_opcodes:mnemonic(?XOR);
+assemble_infix('<') -> aeb_opcodes:mnemonic(?SLT);    %% comparisons are SIGNED
+assemble_infix('>') -> aeb_opcodes:mnemonic(?SGT);
+assemble_infix('==') -> aeb_opcodes:mnemonic(?EQ);
+assemble_infix('<=') -> [aeb_opcodes:mnemonic(?SGT),aeb_opcodes:mnemonic(?ISZERO)];
+assemble_infix('>=') -> [aeb_opcodes:mnemonic(?SLT),aeb_opcodes:mnemonic(?ISZERO)];
+assemble_infix('!=') -> [aeb_opcodes:mnemonic(?EQ),aeb_opcodes:mnemonic(?ISZERO)].
 
 lookup_fun(Funs,Name,Arity) ->
     case [Ref || {Name1,Arity1,Ref} <- Funs,
@@ -133,7 +133,7 @@ lookup_var(_,Id,[]) ->
 %% Smart instruction generation
 
 dup(N) when N=<16 ->
-    ?DUP1 + N-1.
+    aeb_opcodes:mnemonic(?DUP1 + N-1).
 
 push(N) ->
     Bytes = binary:encode_unsigned(N),
@@ -142,23 +142,23 @@ push(N) ->
      binary_to_list(Bytes)].
  
 swap(N) when N=<16 ->
-    ?SWAP1 + N-1.
+    aeb_opcodes:mnemonic(?SWAP1 + N-1).
 
 %% Resolve references, and convert code from deep list to flat list.
 %% List elements are:
 %%   Opcodes
 %%   Byte values
-%%   {?JUMPDEST,Ref}   -- assembles to ?JUMPDEST and sets Ref
+%%   {'JUMPDEST',Ref}   -- assembles to ?JUMPDEST and sets Ref
 %%   {push_label,Ref}  -- assembles to ?PUSHN address bytes
 
 %% For now, we assemble all code addresses as three bytes.
 
 resolve_references(Code) ->
-    Instrs = lists:flatten(Code),
+    Instrs = optimize_jumps(lists:flatten(Code)),
     Labels = define_labels(0,Instrs),
     lists:flatten([use_labels(Labels,I) || I <- Instrs]).
 
-define_labels(Addr,[{?JUMPDEST,Lab}|More]) ->
+define_labels(Addr,[{'JUMPDEST',Lab}|More]) ->
     [{Lab,Addr}|define_labels(Addr+1,More)];
 define_labels(Addr,[{push_label,_}|More]) ->
     define_labels(Addr+4,More);
@@ -167,16 +167,75 @@ define_labels(Addr,[_|More]) ->
 define_labels(_,[]) ->
     [].
 
-use_labels(_,{?JUMPDEST,_}) ->
-    ?JUMPDEST;
+use_labels(_,{'JUMPDEST',_}) ->
+    'JUMPDEST';
 use_labels(Labels,{push_label,Ref}) ->
     case proplists:get_value(Ref,Labels) of
 	undefined ->
 	    error({undefined_label,Ref});
 	Addr when is_integer(Addr) ->
-	    [?PUSH3,Addr div 65536,(Addr div 256) rem 256, Addr rem 256]
+	    [aeb_opcodes:mnemonic(?PUSH3),
+	     Addr div 65536,(Addr div 256) rem 256, Addr rem 256]
     end;
 use_labels(_,I) ->
     I.
 
+%% Jump optimization:
+%%   Replaces a jump to a jump with a jump to the final destination
+%%   Moves basic blocks to eliminate an unconditional jump to them
+
+optimize_jumps(Code) ->
+    JJs = jumps_to_jumps(Code),
+    ShortCircuited = [short_circuit_jumps(JJs,Instr) || Instr <- Code],
+    eliminate_dead_code(ShortCircuited).
+    %%ShortCircuited.
+
+jumps_to_jumps([{'JUMPDEST',Label},{push_label,Target},'JUMP'|More]) ->
+    [{Label,Target}|jumps_to_jumps(More)];
+jumps_to_jumps([_|More]) ->
+    jumps_to_jumps(More);
+jumps_to_jumps([]) ->
+    [].
+
+short_circuit_jumps(JJs,{push_label,Lab}) ->
+    case proplists:get_value(Lab,JJs) of
+	undefined ->
+	    {push_label,Lab};
+	Target ->
+	    %% I wonder if this will ever loop infinitely?
+	    short_circuit_jumps(JJs,{push_label,Target})
+    end;
+short_circuit_jumps(_JJs,Instr) ->
+    Instr.
+
+eliminate_dead_code(Code) ->
+    Jumps = lists:usort([Lab || {push_label,Lab} <- Code]),
+    Labels = lists:usort([Lab || {'JUMPDEST',Lab} <- Code]),
+    NewCode = live_code(Jumps,Code),
+    if Code==NewCode ->
+	    Code;
+       true ->
+	    eliminate_dead_code(NewCode)
+    end.
+
+live_code(Jumps,['JUMP'|More]) ->
+    ['JUMP'|dead_code(Jumps,More)];
+live_code(Jumps,['STOP'|More]) ->
+    ['STOP'|dead_code(Jumps,More)];
+live_code(Jumps,[I|More]) ->
+    [I|live_code(Jumps,More)];
+live_code(_,[]) ->
+    [].
+
+dead_code(Jumps,[{'JUMPDEST',Lab}|More]) ->
+    case lists:member(Lab,Jumps) of
+	true ->
+	    [{'JUMPDEST',Lab}|live_code(Jumps,More)];
+	false ->
+	    dead_code(Jumps,More)
+    end;
+dead_code(Jumps,[I|More]) ->
+    dead_code(Jumps,More);
+dead_code(_,[]) ->
+    [].
 
