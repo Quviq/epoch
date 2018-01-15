@@ -21,3 +21,6 @@
 -record(ifte,    { decision :: expr()
 		 , then :: expr()
 		 , else :: expr()}).
+
+-record(funcall, { function :: expr()
+		 , args     :: [expr()]}).

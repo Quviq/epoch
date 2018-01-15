@@ -53,8 +53,13 @@ assemble_function(Funs,Name,Args,Body) ->
      swap(1),
      aeb_opcodes:mnemonic(?JUMP)].
 
-assemble_expr(_Funs,Stack,{var_ref,Id}) ->
-    dup(lookup_var(Id,Stack));
+assemble_expr(Funs,Stack,{var_ref,Id}) ->
+    case lists:keyfind(Id,1,Funs) of
+	{Id,_Arity,Label} ->
+	    {push_label,Label};
+	false ->
+	    dup(lookup_var(Id,Stack))
+    end;
 assemble_expr(_Funs,_Stack,{integer,N}) ->
     push(N);
 assemble_expr(Funs,Stack,{binop,'&&',A,B}) ->
@@ -68,6 +73,13 @@ assemble_expr(Funs,Stack,{binop,Op,A,B}) ->
     [assemble_expr(Funs,Stack,B),
      assemble_expr(Funs,[dummy|Stack],A),
      assemble_infix(Op)];
+assemble_expr(Funs,Stack,{funcall,Fun,Args}) ->
+    %% TODO: tail-call optimization!
+    Return = make_ref(),
+    [{push_label,Return},
+     assemble_exprs(Funs,[return_address|Stack],Args++[Fun]),
+     'JUMP',
+     {'JUMPDEST',Return}];
 assemble_expr(Funs,Stack,{ifte,Decision,Then,Else}) ->
     Close = make_ref(),
     ThenL  = make_ref(),
@@ -81,6 +93,12 @@ assemble_expr(Funs,Stack,{ifte,Decision,Then,Else}) ->
      assemble_expr(Funs,Stack,Then),
      {aeb_opcodes:mnemonic(?JUMPDEST),Close}
     ].
+
+assemble_exprs(_Funs,_Stack,[]) ->
+    [];
+assemble_exprs(Funs,Stack,[E|Es]) ->
+    [assemble_expr(Funs,Stack,E),
+     assemble_exprs(Funs,[dummy|Stack],Es)].
 
 assemble_decision(Funs,Stack,{binop,'&&',A,B},Then,Else) ->
     Label = make_ref(),
@@ -190,7 +208,8 @@ optimize_jumps(Code) ->
     NoDeadCode = eliminate_dead_code(ShortCircuited),
     MovedCode = merge_blocks(moveable_blocks(NoDeadCode)),
     %% Moving code may have made some labels superfluous.
-    eliminate_dead_code(MovedCode).  
+    eliminate_dead_code(MovedCode). 
+
 
 jumps_to_jumps([{'JUMPDEST',Label},{push_label,Target},'JUMP'|More]) ->
     [{Label,Target}|jumps_to_jumps(More)];

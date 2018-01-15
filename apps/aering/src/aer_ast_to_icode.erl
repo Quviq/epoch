@@ -64,6 +64,9 @@ ast_body({int, _, Value}) ->
     #integer{value = Value};
 ast_body({app,[_,{format,infix}],{Op,_},[A,B]}) ->
     #binop{op = Op, left = ast_body(A), right = ast_body(B)};
+ast_body({app,_,Fun,Args}) ->
+    #funcall{function=ast_body(Fun), 
+	     args=[ast_body(A) || A <- Args]};
 ast_body({'if',_,Dec,Then,Else}) ->
     #ifte{decision = ast_body(Dec)
 	 ,then     = ast_body(Then)

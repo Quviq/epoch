@@ -1,0 +1,18 @@
+
+contract type Identity = {
+  type state;
+
+  let main: int => int;
+};
+
+contract Identity = {
+  let main(x:int) = {
+    //double(double(x));
+    //2*x + 1;
+    fac(6);
+    //if (x==42) 1 else (x*x);
+  };
+  let fac(n:int) = {
+    if (n==0) 1 else (n*fac(n-1));
+  };
+};
