@@ -14,59 +14,116 @@
 -include_lib("aebytecode/include/aeb_opcodes.hrl").
 -include("aer_icode.hrl").
 
-convert(#{ contract_name := Name
+convert(#{ contract_name := _ContractName
          , functions := Functions
               },
-        Options) ->
-    {_Env, Code} =
-        assemble(Functions,  #{ options => Options
-                              , vars => []
-                              , functions => []
-                              , sp => 0
-                              , frame_size => 0
-                              , address => 0
-                              },
-                 [aeb_opcodes:mnemonic(?COMMENT), "CONTRACT: " ++ Name]),
-    Code.
+        _Options) ->
+    %% Create a function environment
+    Funs = [{Name, length(Args), make_ref()}
+    	    || {Name, Args, _Body} <- Functions],
+    %% Create dummy code to call the main function with one argument
+    %% taken from the stack
+    StopLabel = make_ref(),
+    MainFunction = lookup_fun(Funs,"main",1),
+    DummyCode = [%% push a return address to stop
+		 {push_label,StopLabel},
+		 %% swap argument to the top of the stack
+		 ?SWAP1,
+		 {push_label,MainFunction},
+		 ?JUMP,
+		 {?JUMPDEST,StopLabel},
+		 ?STOP
+		],
+   
+    %% Code is a deep list of instructions, containing labels and
+    %% references to them.
+    Code = [assemble_function(Funs,Name,Args,Body) 
+	    || {Name,Args,Body} <- Functions],
+    resolve_references(
+        [%% aeb_opcodes:mnemonic(?COMMENT), "CONTRACT: " ++ ContractName,
+	 DummyCode,
+	 Code]).
 
-assemble([{Name, Args, Body}|More], #{frame_size := FS
-                                     , address := Address} = Env, Code) ->
-    Env0 = add_function(Name, Address, Env),
-    {BodyCode, NewEnv} = assemble_body(Body, add_args(Args, Env0, FS), Code),
-    assemble(More, NewEnv, BodyCode);
-assemble([], Env, Code) -> {Env, Code}.
+assemble_function(Funs,Name,Args,Body) ->
+    [{?JUMPDEST,lookup_fun(Funs,Name,length(Args))},
+     assemble_expr(Funs, lists:reverse(Args), Body),
+     %% swap return value and first argument
+     [swap(length(Args)) || Args/=[]],
+     [?POP || _ <- Args],
+     swap(1),
+     ?JUMP].
 
-%% TODO:
-%%   Why are we (a) passing Code around so we can add to it, and (b) storing it
-%%   in forwards order, so instructions have to be added by append???
-assemble_body({var_ref, Id}, #{sp := SP} = Env, Code) ->
-    SL = lookup_var(Id, Env),
-    Instr = aeb_opcodes:mnemonic(?DUP1 + SP + SL),
-    NewEnv = inc_sp(Env),
-    {Code ++ [Instr], NewEnv};
-assemble_body({integer, N}, Env, Code) ->
-    %% TODO: assume N is non-negative for now.
-    true = N >= 0;
+assemble_expr(_Funs,Stack,{var_ref,Id}) ->
+    dup(lookup_var(Id,Stack));
+assemble_expr(_Funs,_Stack,{integer,N}) ->
+    push(N).
+
+lookup_fun(Funs,Name,Arity) ->
+    case [Ref || {Name1,Arity1,Ref} <- Funs,
+		 {Name,Arity} == {Name1,Arity1}] of
+	[Ref] ->
+	    Ref;
+	[] ->
+	    error({undefined_function,Name,Arity})
+    end.
+
+lookup_var(Id,Stack) ->
+    lookup_var(1,Id,Stack).
+
+lookup_var(N,Id,[{Id,_Type}|_]) ->
+    N;
+lookup_var(N,Id,[_|Stack]) ->
+    lookup_var(N+1,Id,Stack);
+lookup_var(_,Id,[]) ->
+    error({var_not_in_scope,Id}).
+
+%% Smart instruction generation
+
+dup(N) when N=<16 ->
+    ?DUP1 + N-1.
+
+push(N) ->
     Bytes = binary:encode_unsigned(N),
-    Instr = aeb_opcodes:mnemonic(?PUSH1 + size(Bytes)-1),
-    NewEnv = inc_sp(Env),
-    {Code ++ [Instr] ++ binary_to_list(Bytes), NewEnv}.
+    true = size(Bytes) =< 32,
+    [aeb_opcodes:mnemonic(?PUSH1 + size(Bytes)-1) |
+     binary_to_list(Bytes)].
+ 
+swap(N) when N=<16 ->
+    ?SWAP1 + N-1.
 
-inc_sp( #{sp := SP} = Env ) ->  Env#{ sp => SP + 1}.
+%% Resolve references, and convert code from deep list to flat list.
+%% List elements are:
+%%   Opcodes
+%%   Byte values
+%%   {?JUMPDEST,Ref}   -- assembles to ?JUMPDEST and sets Ref
+%%   {push_label,Ref}  -- assembles to ?PUSHN address bytes
 
-add_args([{Id, Type}| Rest], #{ vars := Args } = Env, ArgPos) ->
-    add_args(Rest,
-             Env#{ vars => [{Id, Type, ArgPos} | Args] },
-             ArgPos + 1);
-add_args([], Env, FS) -> Env#{ frame_size => FS}.
+%% For now, we assemble all code addresses as three bytes.
 
-lookup_var(ID, #{ vars := Vars}) ->
-    var_sp(ID, Vars).
+resolve_references(Code) ->
+    Instrs = lists:flatten(Code),
+    Labels = define_labels(0,Instrs),
+    lists:flatten([use_labels(Labels,I) || I <- Instrs]).
 
-var_sp(ID, [{ID,_Type, SP} | _]) ->  SP;
-var_sp(ID, [_|Rest] ) -> var_sp(ID, Rest);
-var_sp(ID, []) -> error({var_out_of_scope, ID}).
+define_labels(Addr,[{?JUMPDEST,Lab}|More]) ->
+    [{Lab,Addr}|define_labels(Addr+1,More)];
+define_labels(Addr,[{push_label,_}|More]) ->
+    define_labels(Addr+4,More);
+define_labels(Addr,[_|More]) ->
+    define_labels(Addr+1,More);
+define_labels(_,[]) ->
+    [].
 
-          
-add_function(Name, Address, #{ functions := Functions } = Env) ->
-    Env#{ functions => [{Name, Address} | Functions]}.
+use_labels(_,{?JUMPDEST,_}) ->
+    ?JUMPDEST;
+use_labels(Labels,{push_label,Ref}) ->
+    case proplists:get_value(Ref,Labels) of
+	undefined ->
+	    error({undefined_label,Ref});
+	Addr when is_integer(Addr) ->
+	    [?PUSH3,Addr div 65536,(Addr div 256) rem 256, Addr rem 256]
+    end;
+use_labels(_,I) ->
+    I.
+
+
