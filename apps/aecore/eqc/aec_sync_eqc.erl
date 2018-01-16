@@ -324,7 +324,7 @@ ping_callouts(_S, [Uri, Response]) ->
                         <<"source">> => list_to_binary(pp(Uri)) }}
              end),
   %% Note that the parameters in the request haveencoded hashes
-  ?CALLOUT(aeu_http_client, request, [?WILDCARD, post, "ping", ?WILDCARD], {Tag, RemoteObj}),
+  ?CALLOUT(aeu_http_client, request, [?WILDCARD, 'Ping', ?WILDCARD], {Tag, RemoteObj}),
   ?WHEN(Response == ok,
         begin
           ?MATCH(Res, ?APPLY(compare_ping_objects, [Local, Remote])),
@@ -485,7 +485,7 @@ aeu_http_client_spec() ->
   #api_module{ 
      name = aeu_http_client,
      functions = 
-       [ #api_fun{ name = request, arity = 4}
+       [ #api_fun{ name = request, arity = 3}
        ]}.
 
 jobs_spec() ->
