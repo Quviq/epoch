@@ -76,7 +76,13 @@ ast_body({app,_,Fun,Args}) ->
 ast_body({'if',_,Dec,Then,Else}) ->
     #ifte{decision = ast_body(Dec)
 	 ,then     = ast_body(Then)
-	 ,else     = ast_body(Else)}.
+	 ,else     = ast_body(Else)};
+ast_body({switch,_,A,Cases}) ->
+    %% let's assume the parser has already ensured that only valid
+    %% patterns appear in cases.
+    #switch{expr=ast_body(A),
+	    cases=[{ast_body(Pat),ast_body(Body)}
+		   || {'case',_,Pat,Body} <- Cases]}.
     
 
 ast_fun_to_icode(Name, Args, Body, #{functions := Funs} = Icode) ->

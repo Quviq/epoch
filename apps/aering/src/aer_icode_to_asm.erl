@@ -118,7 +118,12 @@ assemble_expr(Funs,Stack,{ifte,Decision,Then,Else}) ->
      {aeb_opcodes:mnemonic(?JUMPDEST),ThenL},
      assemble_expr(Funs,Stack,Then),
      {aeb_opcodes:mnemonic(?JUMPDEST),Close}
-    ].
+    ];
+assemble_expr(Funs,Stack,{switch,A,Cases}) ->
+    Close = make_ref(),
+    [assemble_expr(Funs,Stack,A),
+     assemble_cases(Funs,Stack,Close,Cases),
+     {'JUMPDEST',Close}].
 
 assemble_exprs(_Funs,_Stack,[]) ->
     [];
@@ -148,6 +153,106 @@ assemble_decision(Funs,Stack,Decision,Then,Else) ->
     [assemble_expr(Funs,Stack,Decision),
      {push_label,Then}, aeb_opcodes:mnemonic(?JUMPI),
      {push_label,Else}, aeb_opcodes:mnemonic(?JUMP)].
+
+%% Entered with value to switch on on top of the stack
+%% Evaluate selected case, then jump to Close with result on the
+%% stack.
+assemble_cases(_Funs,_Stack,_Close,[]) ->
+    %% No match! What should be do? There's no real way to raise an
+    %% exception, except consuming all the gas.
+    %% There should not be enough gas to do this:
+    [push(1), aeb_opcodes:mnemonic(?NOT),
+     aeb_opcodes:mnemonic(?MLOAD),
+     %% now stop, so that jump optimizer realizes we will not fall
+     %% through this code.
+     aeb_opcodes:mnemonic(?STOP)];
+assemble_cases(Funs,Stack,Close,[{Pattern,Body}|Cases]) ->
+    Succeed = make_ref(),
+    Fail = make_ref(),
+    {NewVars,MatchingCode} =
+	assemble_pattern(Succeed,Fail,Pattern),
+    [dup(1),   %% save value for next case
+     MatchingCode,
+     {'JUMPDEST',Succeed},
+     %% Discard saved value
+     case NewVars of
+	 [] ->
+	     pop(1);
+	 _ ->
+	     [swap(length(NewVars)), pop(1)]
+     end,
+     [[] || io:format("Assembling ~p with stack ~p\n",[Body,reorder_vars(NewVars)++Stack])/=ok],
+     assemble_expr(Funs,reorder_vars(NewVars)++Stack,Body),
+     pop_args(length(NewVars)),
+     {push_label,Close},
+     'JUMP',
+     {'JUMPDEST',Fail},
+     assemble_cases(Funs,Stack,Close,Cases)].
+
+%% Entered with value to match on top of the stack.
+%% Generated code removes value, and 
+%%   - jumps to Fail if no match, or
+%%   - binds variables, leaves them on the stack, and jumps to Succeed
+%% Result is a list of variables to add to the stack, and the matching
+%% code. 
+assemble_pattern(Succeed,Fail,{integer,N}) ->
+    {[],[push(N),
+	 aeb_opcodes:mnemonic(?EQ),
+	 {push_label,Succeed},
+	 aeb_opcodes:mnemonic(?JUMPI),
+	 {push_label,Fail},
+	 'JUMP']};
+assemble_pattern(Succeed,_Fail,{var_ref,Id}) ->
+    {[{Id,dummy_type}],
+     [{push_label,Succeed},'JUMP']};
+assemble_pattern(Succeed,_Fail,{tuple,[]}) ->
+    {[],
+     [pop(1), {push_label,Succeed}, 'JUMP']};
+assemble_pattern(Succeed,Fail,{tuple,[A]}) ->
+    %% Treat this case specially, because we don't need to save the
+    %% pointer to the tuple.
+    {AVars,ACode} = assemble_pattern(Succeed,Fail,A),
+    {AVars,[aeb_opcodes:mnemonic(?MLOAD),
+	    ACode]};
+assemble_pattern(Succeed,Fail,{tuple,[A|B]}) ->
+    %% Entered with the address of the tuple on the top of the
+    %% stack. We will duplicate the address before matching on A.
+    Continue = make_ref(),  %% the label for matching B
+    Pop1Fail = make_ref(),  %% pop 1 word and goto Fail
+    PopNFail = make_ref(),  %% pop length(AVars) words and goto Fail
+    {AVars,ACode} =
+	assemble_pattern(Continue,Pop1Fail,A),
+    {BVars,BCode} =
+	assemble_pattern(Succeed,PopNFail,{tuple,B}),
+    {BVars++reorder_vars(AVars),
+     [%% duplicate the pointer so we don't lose it when we match on A
+      dup(1),
+      aeb_opcodes:mnemonic(?MLOAD),
+      ACode,
+      {'JUMPDEST',Continue},
+      %% Bring the pointer to the top of the stack--this reorders AVars!
+      swap(length(AVars)),
+      push(32), 
+      aeb_opcodes:mnemonic(?ADD),
+      BCode,
+      case AVars of
+	  [] ->
+	      [{'JUMPDEST',Pop1Fail},pop(1),
+	       {'JUMPDEST',PopNFail},
+	       {push_label,Fail},'JUMP'];
+	  _ ->
+	      [{'JUMPDEST',PopNFail},pop(length(AVars)-1),
+	       {'JUMPDEST',Pop1Fail},pop(1),
+	       {push_label,Fail},'JUMP']
+      end]}.
+
+%% When Vars are on the stack, with a value we want to discard
+%% below them, then we swap the top variable with that value and pop.
+%% This reorders the variables on the stack, as follows:
+reorder_vars([]) ->
+    [];
+reorder_vars([V|Vs]) ->
+    Vs++[V].
 
 assemble_prefix('-') -> [push(0),aeb_opcodes:mnemonic(?SUB)];
 assemble_prefix('bnot') -> aeb_opcodes:mnemonic(?NOT).
@@ -202,6 +307,15 @@ push(N) ->
     true = size(Bytes) =< 32,
     [aeb_opcodes:mnemonic(?PUSH1 + size(Bytes)-1) |
      binary_to_list(Bytes)].
+
+%% Pop N values from UNDER the top element of the stack.
+%% TODO: make this a pseudo-instruction so peephole optimization can
+%% combine pop_args(M), pop_args(N) to pop_args(M+N)
+pop_args(N) ->
+    [swap(N),pop(N)].
+
+pop(N) ->
+    [aeb_opcodes:mnemonic(?POP) || _ <- lists:seq(1,N)].
  
 swap(N) when N=<16 ->
     aeb_opcodes:mnemonic(?SWAP1 + N-1).

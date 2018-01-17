@@ -29,5 +29,8 @@
 		 , then :: expr()
 		 , else :: expr()}).
 
+-record(switch,  { expr  :: expr()
+		 , cases :: [{expr(),expr()}]}).
+
 -record(funcall, { function :: expr()
 		 , args     :: [expr()]}).
