@@ -14,6 +14,9 @@
 
 -record(integer, {value :: integer()}).
 
+-record(unop,    { op   :: term()
+		 , rand :: expr()}).
+
 -record(binop,   { op   :: term()
 		 , left :: expr()
 		 , right :: expr()}).

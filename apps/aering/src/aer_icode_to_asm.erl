@@ -64,6 +64,18 @@ assemble_expr(Funs,Stack,{var_ref,Id}) ->
     end;
 assemble_expr(_Funs,_Stack,{integer,N}) ->
     push(N);
+assemble_expr(Funs,Stack,{unop,'!',A}) ->
+    case A of
+	{binop,Logical,_,_} when Logical=='&&'; Logical=='||' ->
+	    assemble_expr(Funs,Stack,{ifte,A,{integer,0},{integer,1}});
+	_ ->
+	    [assemble_expr(Funs,Stack,A),
+	     aeb_opcodes:mnemonic(?ISZERO)
+	    ]
+    end;
+assemble_expr(Funs,Stack,{unop,Op,A}) ->
+    [assemble_expr(Funs,Stack,A),
+     assemble_prefix(Op)];
 assemble_expr(Funs,Stack,{binop,'&&',A,B}) ->
     assemble_expr(Funs,Stack,{ifte,A,B,{integer,0}});
 assemble_expr(Funs,Stack,{binop,'||',A,B}) ->
@@ -115,10 +127,21 @@ assemble_decision(Funs,Stack,{binop,'||',A,B},Then,Else) ->
     [assemble_decision(Funs,Stack,A,Then,Label),
      {aeb_opcodes:mnemonic(?JUMPDEST),Label},
      assemble_decision(Funs,Stack,B,Then,Else)];
+assemble_decision(Funs,Stack,{unop,'!',A},Then,Else) ->
+    assemble_decision(Funs,Stack,A,Else,Then);
+assemble_decision(Funs,Stack,{ifte,A,B,C},Then,Else) ->
+    TrueL = make_ref(),
+    FalseL = make_ref(),
+    [assemble_decision(Funs,Stack,A,TrueL,FalseL),
+     {?JUMPDEST,TrueL},assemble_decision(Funs,Stack,B,Then,Else),
+     {?JUMPDEST,FalseL},assemble_decision(Funs,Stack,C,Then,Else)];
 assemble_decision(Funs,Stack,Decision,Then,Else) ->
     [assemble_expr(Funs,Stack,Decision),
      {push_label,Then}, aeb_opcodes:mnemonic(?JUMPI),
      {push_label,Else}, aeb_opcodes:mnemonic(?JUMP)].
+
+assemble_prefix('-') -> [push(0),aeb_opcodes:mnemonic(?SUB)];
+assemble_prefix('bnot') -> aeb_opcodes:mnemonic(?NOT).
 
 assemble_infix('+') -> aeb_opcodes:mnemonic(?ADD);
 assemble_infix('-') -> aeb_opcodes:mnemonic(?SUB);
@@ -183,12 +206,13 @@ swap(N) when N=<16 ->
 %% For now, we assemble all code addresses as three bytes.
 
 resolve_references(Code) ->
+    Peephole = peep_hole(lists:flatten(Code)),
     %% WARNING: Optimizing jumps reorders the code and deletes
     %% instructions. When debugging the assemble_ functions, it can be
     %% useful to replace the next line by:
     %%   Instrs = lists:flatten(Code)
     %% thus disabling the optimization.
-    Instrs = optimize_jumps(lists:flatten(Code)),
+    Instrs = optimize_jumps(Peephole),
     Labels = define_labels(0,Instrs),
     lists:flatten([use_labels(Labels,I) || I <- Instrs]).
 
@@ -213,6 +237,19 @@ use_labels(Labels,{push_label,Ref}) ->
     end;
 use_labels(_,I) ->
     I.
+
+%% Peep-hole optimization.
+%% The compilation of conditionals can introduce jumps depending on
+%% constants 1 and 0. These are removed by peep-hole optimization. 
+
+peep_hole(['PUSH1',0,{push_label,_},'JUMP1'|More]) ->
+    peep_hole(More);
+peep_hole(['PUSH1',1,{push_label,Lab},'JUMP1'|More]) ->
+    [{push_label,Lab},'JUMP'|peep_hole(More)];
+peep_hole([I|More]) ->
+    [I|peep_hole(More)];
+peep_hole([]) ->
+    [].
 
 %% Jump optimization:
 %%   Replaces a jump to a jump with a jump to the final destination

@@ -62,6 +62,8 @@ ast_body({id, _, Name}) ->
     #var_ref{name = Name};
 ast_body({int, _, Value}) ->
     #integer{value = Value};
+ast_body({app,[_,{format,prefix}],{Op,_},[A]}) ->
+    #unop{op = Op, rand = ast_body(A)};
 ast_body({app,[_,{format,infix}],{Op,_},[A,B]}) ->
     #binop{op = Op, left = ast_body(A), right = ast_body(B)};
 ast_body({app,_,Fun,Args}) ->
