@@ -62,6 +62,10 @@ ast_body({id, _, Name}) ->
     #var_ref{name = Name};
 ast_body({int, _, Value}) ->
     #integer{value = Value};
+ast_body({tuple,_,Args}) ->
+    #tuple{cpts = [ast_body(A) || A <- Args]};
+ast_body({list,_,Args}) ->
+    #list{elems = [ast_body(A) || A <- Args]};
 ast_body({app,[_,{format,prefix}],{Op,_},[A]}) ->
     #unop{op = Op, rand = ast_body(A)};
 ast_body({app,[_,{format,infix}],{Op,_},[A,B]}) ->

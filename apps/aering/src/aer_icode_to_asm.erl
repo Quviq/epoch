@@ -64,6 +64,15 @@ assemble_expr(Funs,Stack,{var_ref,Id}) ->
     end;
 assemble_expr(_Funs,_Stack,{integer,N}) ->
     push(N);
+assemble_expr(Funs,Stack,{tuple,Cpts}) ->
+    [assemble_exprs(Funs,Stack,Cpts),
+     aeb_opcodes:mnemonic(?MSIZE),
+     write_words(length(Cpts))];
+assemble_expr(_Funs,_Stack,{list,[]}) ->
+    %% Use Erik's value of -1 for []
+    [push(0), aeb_opcodes:mnemonic(?NOT)];
+assemble_expr(Funs,Stack,{list,[A|B]}) ->
+    assemble_expr(Funs,Stack,{tuple,[A,{list,B}]});
 assemble_expr(Funs,Stack,{unop,'!',A}) ->
     case A of
 	{binop,Logical,_,_} when Logical=='&&'; Logical=='||' ->
@@ -155,7 +164,8 @@ assemble_infix('>') -> aeb_opcodes:mnemonic(?SGT);
 assemble_infix('==') -> aeb_opcodes:mnemonic(?EQ);
 assemble_infix('<=') -> [aeb_opcodes:mnemonic(?SGT),aeb_opcodes:mnemonic(?ISZERO)];
 assemble_infix('>=') -> [aeb_opcodes:mnemonic(?SLT),aeb_opcodes:mnemonic(?ISZERO)];
-assemble_infix('!=') -> [aeb_opcodes:mnemonic(?EQ),aeb_opcodes:mnemonic(?ISZERO)].
+assemble_infix('!=') -> [aeb_opcodes:mnemonic(?EQ),aeb_opcodes:mnemonic(?ISZERO)];
+assemble_infix('::') -> [aeb_opcodes:mnemonic(?MSIZE), write_word(0), write_word(1)].
 
 lookup_fun(Funs,Name,Arity) ->
     case [Ref || {Name1,Arity1,Ref} <- Funs,
@@ -195,6 +205,22 @@ push(N) ->
  
 swap(N) when N=<16 ->
     aeb_opcodes:mnemonic(?SWAP1 + N-1).
+
+%% Stack: <N elements> ADDR
+%% Write elements at addresses ADDR, ADDR+32, ADDR+64...
+%% Stack afterwards: ADDR
+write_words(N) ->
+     [write_word(I) || I <- lists:seq(N-1,0,-1)].
+
+write_word(I) ->
+    [%% Stack: elements e ADDR
+       swap(1),
+       dup(2),
+       %% Stack: elements ADDR e ADDR
+       push(32*I),
+       aeb_opcodes:mnemonic(?ADD),
+       %% Stack: elements ADDR e ADDR+32I
+       aeb_opcodes:mnemonic(?MSTORE)].
 
 %% Resolve references, and convert code from deep list to flat list.
 %% List elements are:

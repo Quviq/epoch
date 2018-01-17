@@ -14,6 +14,10 @@
 
 -record(integer, {value :: integer()}).
 
+-record(tuple,   {cpts  :: [expr()]}).
+
+-record(list,    {elems :: [expr()]}).
+
 -record(unop,    { op   :: term()
 		 , rand :: expr()}).
 
