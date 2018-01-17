@@ -355,7 +355,7 @@ resolve_references(Code) ->
     %% WARNING: Optimizing jumps reorders the code and deletes
     %% instructions. When debugging the assemble_ functions, it can be
     %% useful to replace the next line by:
-    %%   Instrs = lists:flatten(Code)
+    %% Instrs = lists:flatten(Code),
     %% thus disabling the optimization.
     Instrs = optimize_jumps(Peephole),
     Labels = define_labels(0,Instrs),
