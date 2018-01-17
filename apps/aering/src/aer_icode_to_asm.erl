@@ -56,11 +56,16 @@ assemble_function(Funs,Name,Args,Body) ->
      aeb_opcodes:mnemonic(?JUMP)].
 
 assemble_expr(Funs,Stack,{var_ref,Id}) ->
-    case lists:keyfind(Id,1,Funs) of
-	{Id,_Arity,Label} ->
-	    {push_label,Label};
+    case lists:keymember(Id,1,Stack) of
+	true ->
+	    dup(lookup_var(Id,Stack));
 	false ->
-	    dup(lookup_var(Id,Stack))
+	    case lists:keyfind(Id,1,Funs) of
+		{Id,_Arity,Label} ->
+		    {push_label,Label};
+		false ->
+		    error({undefined_name,Id})
+	    end
     end;
 assemble_expr(_Funs,_Stack,{integer,N}) ->
     push(N);
