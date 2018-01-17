@@ -90,7 +90,7 @@ start(Peers) ->
   Pid.
 
 start_callouts(_S, [Peers]) ->
-  ?PAR([?APPLY(connect, [ Peer ])  || {peer, Peer} <- lists:usort(Peers), Peer =/= error]).
+  ?PAR([?APPLY(connect, [ Peer ])  || {peer, Peer} <- lists:sort(Peers), Peer =/= error]).
 
 
 start_next(S, V, [Peers]) ->
@@ -144,6 +144,9 @@ stop_next(S, _Value, []) ->
 
 %% --- Operation: connect ---
 
+can_be_added(S, Uri) ->
+  not (Uri == error orelse lists:member(full_peer(Uri), S#state.blocked) orelse local_peer(full_peer(Uri))).
+
 connect_peer_args(_S) ->
   [uri()].
 
@@ -161,18 +164,12 @@ connect_peer_post(_S, [_Peer], Res) ->
   eq(Res, ok).
 
 connect_callouts(S, [Uri]) ->
-  ?WHEN(not (lists:member(Uri, S#state.blocked) orelse Uri == error orelse local_peer(full_peer(Uri))),
+  ?WHEN(can_be_added(S, Uri) andalso not lists:member(full_peer(Uri), S#state.peers),
         begin
-          {_, HostStr, Port} = full_peer(Uri),
-          Host = iolist_to_binary(HostStr),
-          %% In order to disambiguate we need to match on Uri
-          ?MATCH({Path, LastSeen, LastPings, TRef, PeerF, ok}, 
-                 ?CALLOUT(jobs, enqueue, 
-                          [sync_jobs, {ping,
-                                       {peer, [], http, Host, Port, ?VAR, ?VAR, ?VAR, ?VAR},
-                                       ?VAR}], ok)),
+          BinUri = list_to_binary(pp(full_peer(Uri))),
+          ?CALLOUT(jobs, enqueue, [sync_jobs, {ping, BinUri}], ok),
           ?APPLY(add_peer, [full_peer(Uri)]),
-          ?APPLY(enqueue, [Uri, {ping, {peer, [], http, Host, Port, Path, LastSeen, LastPings, TRef}, PeerF}])
+          ?APPLY(enqueue, [Uri, {ping, BinUri}])
         end).
 
 connect_features(S, [Uri], _Res) ->
@@ -185,8 +182,13 @@ enqueue_next(S, _, [Uri, Task]) ->
   S#state{ queue = S#state.queue ++ [{Uri, Task}],
            tried_connect = S#state.tried_connect ++ [Uri] }.
 
-add_peer_next(S, _Value, [Uri]) ->
-  S#state{ peers = (S#state.peers -- [Uri]) ++ [Uri] }.
+add_peer_next(S, _, [Uri]) ->
+  case can_be_added(S, Uri) of
+    true ->
+      S#state{ peers = (S#state.peers -- [full_peer(Uri)]) ++ [full_peer(Uri)] };
+    false ->
+      S
+  end.
 
 
 %% --- Operation: sync_worker ---
@@ -209,7 +211,7 @@ sync_worker_callouts(S, [Uri, Task, Response]) ->
   ?MATCH([{_, TheJob}], ?CALLOUT(jobs, dequeue, [sync_jobs, 1], [{S#state.time, Task}])),
   ?APPLY(timer_inc, []),
   case TheJob of
-    {ping, _Peer, _PeerF} ->
+    {ping, _BinUri} ->
       ?APPLY(ping, [Uri, Response])
   end.
 
@@ -232,7 +234,7 @@ all_peers() ->
 
 all_peers_post(S, [], Res) ->
   eq(lists:sort([binary_to_list(P) || P <- Res]), 
-     lists:sort([ pp(P) || P <- S#state.peers])).
+     lists:sort([ pp(P) || P <- S#state.peers ])).
 
 
 %% --- Operation: get_random ---
@@ -306,7 +308,8 @@ ping_callouts(_S, [Uri, Response]) ->
              #{best_hash => oneof([maps:get(best_hash, Local), <<1,2,3,4>>]),
                difficulty => difficulty(),
                genesis_hash => oneof([maps:get(genesis_hash, Local), <<1,2,3,4>>]),
-               peers => ?LET(Peers, list(uri()), [ pp(P) || P<-Peers])}),
+               peers => ?LET(Peers, list(uri()), [ pp(P) || P<-Peers]),
+               source => oneof([list_to_binary(pp(Uri)), <<"blubber">>])}),
   ?MATCH_GEN({Tag, RemoteObj}, 
              case Response of
                error ->
@@ -327,6 +330,7 @@ ping_callouts(_S, [Uri, Response]) ->
   ?CALLOUT(aeu_http_client, request, [?WILDCARD, 'Ping', ?WILDCARD], {Tag, RemoteObj}),
   ?WHEN(Response == ok,
         begin
+          ?APPLY(add_peer, [Uri]),
           ?MATCH(Res, ?APPLY(compare_ping_objects, [Local, Remote])),
           ?WHEN(Res == ok,
                 ?APPLY(ping_peers, [Uri, maps:get(peers, Remote)])),
@@ -339,9 +343,17 @@ ping_callouts(_S, [Uri, Response]) ->
 ping_next(S, Value, [Uri, block]) ->
   block_next(S, Value, [Uri]);
 ping_next(S, _Value, [Uri, error]) ->
-  S#state{ errored = (S#state.errored -- [full_peer(Uri)]) ++ [full_peer(Uri)] };
+  %% Only when it is a valid peer it can be errored
+  case lists:member(full_peer(Uri), S#state.peers) of
+    true ->
+      S#state{ errored = (S#state.errored -- [full_peer(Uri)]) ++ [full_peer(Uri)]};
+    false ->
+      S
+  end;
 ping_next(S, _Value, [Uri, ok]) ->
-  S#state{ errored = S#state.errored -- [full_peer(Uri)] }.
+  %% do not add peers here, if they don't block they are added in callouts
+  S#state{ errored = S#state.errored -- [full_peer(Uri)]}.
+
 
 %% Only ping unknown valid Uri's that are provided by new peer.
 ping_peers_callouts(S, [Uri, Peers]) ->
