@@ -208,6 +208,8 @@ assemble_pattern(Succeed,Fail,{integer,N}) ->
 	 aeb_opcodes:mnemonic(?JUMPI),
 	 {push_label,Fail},
 	 'JUMP']};
+assemble_pattern(Succeed,_Fail,{var_ref,"_"}) ->
+    {[],[aeb_opcodes:mnemonic(?POP),{push_label,Succeed},'JUMP']};
 assemble_pattern(Succeed,_Fail,{var_ref,Id}) ->
     {[{Id,dummy_type}],
      [{push_label,Succeed},'JUMP']};
