@@ -48,13 +48,13 @@ convert(#{ contract_name := _ContractName
 
 assemble_function(Funs,Name,Args,Body) ->
     [{aeb_opcodes:mnemonic(?JUMPDEST),lookup_fun(Funs,Name,length(Args))},
-     assemble_expr(Funs, lists:reverse(Args), Body),
+     assemble_expr(Funs, lists:reverse(Args), tail, Body),
      %% swap return value and first argument
      pop_args(length(Args)),
      swap(1),
      aeb_opcodes:mnemonic(?JUMP)].
 
-assemble_expr(Funs,Stack,{var_ref,Id}) ->
+assemble_expr(Funs,Stack,_TailPosition,{var_ref,Id}) ->
     case lists:keymember(Id,1,Stack) of
 	true ->
 	    dup(lookup_var(Id,Stack));
@@ -66,9 +66,9 @@ assemble_expr(Funs,Stack,{var_ref,Id}) ->
 		    error({undefined_name,Id})
 	    end
     end;
-assemble_expr(_Funs,_Stack,{integer,N}) ->
+assemble_expr(_Funs,_Stack,_,{integer,N}) ->
     push(N);
-assemble_expr(Funs,Stack,{tuple,Cpts}) ->
+assemble_expr(Funs,Stack,_,{tuple,Cpts}) ->
     %% We build tuples right-to-left, so that the first write to the
     %% tuple extends the memory size. Because we use ?MSIZE as the
     %% heap pointer, we must allocate the tuple AFTER computing the
@@ -80,7 +80,7 @@ assemble_expr(Funs,Stack,{tuple,Cpts}) ->
 	    %% It doesn't matter what the address of the empty tuple is.
 	    push(0);
 	[Last|Rest] ->
-	    [assemble_expr(Funs,Stack,Last),
+	    [assemble_expr(Funs,Stack,nontail,Last),
 	     %% allocate the tuple memory
 	     aeb_opcodes:mnemonic(?MSIZE),
 	     %% compute address of last word
@@ -92,7 +92,7 @@ assemble_expr(Funs,Stack,{tuple,Cpts}) ->
 	     [[%% Update pointer to next word to be written
 	       push(32), swap(1), aeb_opcodes:mnemonic(?SUB),
 	       %% Compute element
-	       assemble_expr(Funs,[pointer|Stack],A),
+	       assemble_expr(Funs,[pointer|Stack],nontail,A),
 	       %% Write element to memory
 	       dup(2), aeb_opcodes:mnemonic(?MSTORE)]
 	       %% And we leave a pointer to the last word written on
@@ -100,35 +100,35 @@ assemble_expr(Funs,Stack,{tuple,Cpts}) ->
 	      || A <- Rest]]
 	    %% The pointer to the entire tuple is on the stack
     end;
-assemble_expr(_Funs,_Stack,{list,[]}) ->
+assemble_expr(_Funs,_Stack,_,{list,[]}) ->
     %% Use Erik's value of -1 for []
     [push(0), aeb_opcodes:mnemonic(?NOT)];
-assemble_expr(Funs,Stack,{list,[A|B]}) ->
-    assemble_expr(Funs,Stack,{tuple,[A,{list,B}]});
-assemble_expr(Funs,Stack,{unop,'!',A}) ->
+assemble_expr(Funs,Stack,_,{list,[A|B]}) ->
+    assemble_expr(Funs,Stack,nontail,{tuple,[A,{list,B}]});
+assemble_expr(Funs,Stack,_,{unop,'!',A}) ->
     case A of
 	{binop,Logical,_,_} when Logical=='&&'; Logical=='||' ->
-	    assemble_expr(Funs,Stack,{ifte,A,{integer,0},{integer,1}});
+	    assemble_expr(Funs,Stack,nontail,{ifte,A,{integer,0},{integer,1}});
 	_ ->
-	    [assemble_expr(Funs,Stack,A),
+	    [assemble_expr(Funs,Stack,nontail,A),
 	     aeb_opcodes:mnemonic(?ISZERO)
 	    ]
     end;
-assemble_expr(Funs,Stack,{unop,Op,A}) ->
-    [assemble_expr(Funs,Stack,A),
+assemble_expr(Funs,Stack,_,{unop,Op,A}) ->
+    [assemble_expr(Funs,Stack,nontail,A),
      assemble_prefix(Op)];
-assemble_expr(Funs,Stack,{binop,'&&',A,B}) ->
-    assemble_expr(Funs,Stack,{ifte,A,B,{integer,0}});
-assemble_expr(Funs,Stack,{binop,'||',A,B}) ->
-    assemble_expr(Funs,Stack,{ifte,A,{integer,1},B});
-assemble_expr(Funs,Stack,{binop,Op,A,B}) ->
+assemble_expr(Funs,Stack,Tail,{binop,'&&',A,B}) ->
+    assemble_expr(Funs,Stack,Tail,{ifte,A,B,{integer,0}});
+assemble_expr(Funs,Stack,Tail,{binop,'||',A,B}) ->
+    assemble_expr(Funs,Stack,Tail,{ifte,A,{integer,1},B});
+assemble_expr(Funs,Stack,_,{binop,Op,A,B}) ->
     %% EEVM binary instructions take their first argument from the top
     %% of the stack, so to get operands on the stack in the right
     %% order, we evaluate from right to left.
-    [assemble_expr(Funs,Stack,B),
-     assemble_expr(Funs,[dummy|Stack],A),
+    [assemble_expr(Funs,Stack,nontail,B),
+     assemble_expr(Funs,[dummy|Stack],nontail,A),
      assemble_infix(Op)];
-assemble_expr(Funs,Stack,{funcall,Fun,Args}) ->
+assemble_expr(Funs,Stack,nontail,{funcall,Fun,Args}) ->
     %% TODO: tail-call optimization!
     Return = make_ref(),
     %% This is the obvious code:
@@ -143,7 +143,7 @@ assemble_expr(Funs,Stack,{funcall,Fun,Args}) ->
     case Args of
 	[] ->
 	    [{push_label,Return},
-	     assemble_expr(Funs,[return_address|Stack],Fun),
+	     assemble_expr(Funs,[return_address|Stack],nontail,Fun),
 	     'JUMP',
 	     {'JUMPDEST',Return}];
 	_ ->
@@ -153,11 +153,31 @@ assemble_expr(Funs,Stack,{funcall,Fun,Args}) ->
 	     %% reorders the args correctly.
 	     {push_label,Return},
 	     swap(length(Args)),
-	     assemble_expr(Funs,[dummy || _ <- Args]++[return_address|Stack],Fun),
+	     assemble_expr(Funs,[dummy || _ <- Args]++[return_address|Stack],nontail,Fun),
 	     'JUMP',
 	     {'JUMPDEST',Return}]
-    end;	     
-assemble_expr(Funs,Stack,{ifte,Decision,Then,Else}) ->
+    end;
+assemble_expr(Funs,Stack,tail,{funcall,Fun,Args}) ->
+    {Prefix,Suffix} = case is_top_level_fun(Funs,Stack,Fun) of
+			  true ->
+			      {assemble_exprs(Funs,Stack,Args),
+			       %% The Fun CANNOT refer to local variables
+			       [assemble_expr(Funs,[],nontail,Fun)]};
+			  false ->
+			      {assemble_exprs(Funs,Stack,Args++[Fun]),
+			       []}
+		      end,
+    %% Compute the function just before the call if it constant.
+    %% Copy arguments back down the stack to the start of the frame
+    ShuffleSpec = lists:seq(length(Args)+(1-length(Suffix)),1,-1)++[discard || _ <- Stack],
+    Shuffle = shuffle_stack(ShuffleSpec),
+    io:format("Tail-call: shuffling ~p\n"
+	      "                with ~p\n"
+	      "              to get ~p\n",
+	      [lists:reverse([function||Suffix==[]]++[{arg,I}||I<-lists:seq(length(Args),1,-1)]++Stack),
+	       Shuffle,ShuffleSpec]),
+    [Prefix,Shuffle,Suffix,'JUMP'];
+assemble_expr(Funs,Stack,Tail,{ifte,Decision,Then,Else}) ->
     %% This compilation scheme introduces a lot of labels and
     %% jumps. Unnecessary ones are removed later in
     %% resolve_references.
@@ -166,23 +186,23 @@ assemble_expr(Funs,Stack,{ifte,Decision,Then,Else}) ->
     ElseL  = make_ref(),
     [assemble_decision(Funs,Stack,Decision,ThenL,ElseL),
      {aeb_opcodes:mnemonic(?JUMPDEST),ElseL},
-     assemble_expr(Funs,Stack,Else),
+     assemble_expr(Funs,Stack,Tail,Else),
      {push_label,Close},
      aeb_opcodes:mnemonic(?JUMP),
      {aeb_opcodes:mnemonic(?JUMPDEST),ThenL},
-     assemble_expr(Funs,Stack,Then),
+     assemble_expr(Funs,Stack,Tail,Then),
      {aeb_opcodes:mnemonic(?JUMPDEST),Close}
     ];
-assemble_expr(Funs,Stack,{switch,A,Cases}) ->
+assemble_expr(Funs,Stack,Tail,{switch,A,Cases}) ->
     Close = make_ref(),
-    [assemble_expr(Funs,Stack,A),
-     assemble_cases(Funs,Stack,Close,Cases),
+    [assemble_expr(Funs,Stack,nontail,A),
+     assemble_cases(Funs,Stack,Tail,Close,Cases),
      {'JUMPDEST',Close}].
 
 assemble_exprs(_Funs,_Stack,[]) ->
     [];
 assemble_exprs(Funs,Stack,[E|Es]) ->
-    [assemble_expr(Funs,Stack,E),
+    [assemble_expr(Funs,Stack,nontail,E),
      assemble_exprs(Funs,[dummy|Stack],Es)].
 
 assemble_decision(Funs,Stack,{binop,'&&',A,B},Then,Else) ->
@@ -204,14 +224,14 @@ assemble_decision(Funs,Stack,{ifte,A,B,C},Then,Else) ->
      {?JUMPDEST,TrueL},assemble_decision(Funs,Stack,B,Then,Else),
      {?JUMPDEST,FalseL},assemble_decision(Funs,Stack,C,Then,Else)];
 assemble_decision(Funs,Stack,Decision,Then,Else) ->
-    [assemble_expr(Funs,Stack,Decision),
+    [assemble_expr(Funs,Stack,nontail,Decision),
      {push_label,Then}, aeb_opcodes:mnemonic(?JUMPI),
      {push_label,Else}, aeb_opcodes:mnemonic(?JUMP)].
 
 %% Entered with value to switch on on top of the stack
 %% Evaluate selected case, then jump to Close with result on the
 %% stack.
-assemble_cases(_Funs,_Stack,_Close,[]) ->
+assemble_cases(_Funs,_Stack,_Tail,_Close,[]) ->
     %% No match! What should be do? There's no real way to raise an
     %% exception, except consuming all the gas.
     %% There should not be enough gas to do this:
@@ -220,7 +240,7 @@ assemble_cases(_Funs,_Stack,_Close,[]) ->
      %% now stop, so that jump optimizer realizes we will not fall
      %% through this code.
      aeb_opcodes:mnemonic(?STOP)];
-assemble_cases(Funs,Stack,Close,[{Pattern,Body}|Cases]) ->
+assemble_cases(Funs,Stack,Tail,Close,[{Pattern,Body}|Cases]) ->
     Succeed = make_ref(),
     Fail = make_ref(),
     {NewVars,MatchingCode} =
@@ -238,12 +258,16 @@ assemble_cases(Funs,Stack,Close,[{Pattern,Body}|Cases]) ->
 	 _ ->
 	     [swap(length(NewVars)), pop(1)]
      end,
-     assemble_expr(Funs,reorder_vars(NewVars)++Stack,Body),
+     assemble_expr(Funs,reorder_vars(NewVars)++Stack,Tail,Body),
+     %% If the Body makes a tail call, then we will not return
+     %% here--but it doesn't matter, because
+     %% (a) the NewVars will be popped before the tailcall
+     %% (b) the code below will be deleted since it is dead
      pop_args(length(NewVars)),
      {push_label,Close},
      'JUMP',
      {'JUMPDEST',Fail},
-     assemble_cases(Funs,Stack,Close,Cases)].
+     assemble_cases(Funs,Stack,Tail,Close,Cases)].
 
 %% Entered with value to match on top of the stack.
 %% Generated code removes value, and 
@@ -349,6 +373,32 @@ assemble_infix('>=') -> [aeb_opcodes:mnemonic(?SLT),aeb_opcodes:mnemonic(?ISZERO
 assemble_infix('!=') -> [aeb_opcodes:mnemonic(?EQ),aeb_opcodes:mnemonic(?ISZERO)];
 assemble_infix('::') -> [aeb_opcodes:mnemonic(?MSIZE), write_word(0), write_word(1)].
 
+%% shuffle_stack reorders the stack before a tailcall. It is called
+%% with a description of the current stack, and how the final stack
+%% should appear. The argument is a list containing
+%%   a NUMBER for each element that should be kept, the number being
+%%     the position this element should occupy in the final stack
+%%   discard, for elements that can be discarded.
+%% The positions start at 1, referring to the variable to be placed at
+%% the bottom of the stack, and ranging up to the size of the final stack.
+shuffle_stack([]) ->
+    [];
+shuffle_stack([discard|Stack]) ->
+    [aeb_opcodes:mnemonic(?POP) | shuffle_stack(Stack)];
+shuffle_stack([N|Stack]) ->
+    case length(Stack)+1 - N of
+	0 ->
+	    %% the job should be finished
+	    CorrectStack = lists:seq(N-1,1,-1),
+	    CorrectStack = Stack,
+	    [];		
+	MoveBy ->
+	    {Pref,[_|Suff]} = lists:split(MoveBy-1,Stack),
+	    [swap(MoveBy)|shuffle_stack([lists:nth(MoveBy,Stack)|Pref++[N|Suff]])]
+    end.
+
+
+
 lookup_fun(Funs,Name,Arity) ->
     case [Ref || {Name1,Arity1,Ref} <- Funs,
 		 {Name,Arity} == {Name1,Arity1}] of
@@ -357,6 +407,11 @@ lookup_fun(Funs,Name,Arity) ->
 	[] ->
 	    error({undefined_function,Name,Arity})
     end.
+
+is_top_level_fun(Funs,Stack,{var_ref,Id}) ->
+    not lists:keymember(Id,1,Stack);
+is_top_level_fun(_,_,_) ->
+    false.
 
 lookup_var(Id,Stack) ->
     lookup_var(1,Id,Stack).
