@@ -304,7 +304,7 @@ lookup_var(_,Id,[]) ->
 %% problem in assemble_expr, rather than here. A fix here would have
 %% to save the top elements of the stack in memory, duplicate the
 %% targetted element, and then repush the values from memory.
-dup(N) when N=<16 ->
+dup(N) when 1=<N, N=<16 ->
     aeb_opcodes:mnemonic(?DUP1 + N-1).
 
 push(N) ->
@@ -322,7 +322,10 @@ pop_args(N) ->
 pop(N) ->
     [aeb_opcodes:mnemonic(?POP) || _ <- lists:seq(1,N)].
  
-swap(N) when N=<16 ->
+swap(0) ->
+    %% Doesn't exist, but is logically a no-op.
+    [];
+swap(N) when 1=<N, N=<16 ->
     aeb_opcodes:mnemonic(?SWAP1 + N-1).
 
 %% Stack: <N elements> ADDR
