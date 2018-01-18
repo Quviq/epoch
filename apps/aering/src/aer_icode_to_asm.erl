@@ -366,7 +366,8 @@ resolve_references(Code) ->
     %% useful to replace the next line by:
     %% Instrs = lists:flatten(Code),
     %% thus disabling the optimization.
-    Instrs = optimize_jumps(Peephole),
+    OptimizedJumps = optimize_jumps(Peephole),
+    Instrs = lists:reverse(peep_hole_backwards(lists:reverse(OptimizedJumps))),
     Labels = define_labels(0,Instrs),
     lists:flatten([use_labels(Labels,I) || I <- Instrs]).
 
@@ -409,6 +410,29 @@ peep_hole([{pop_args,M},{pop_args,N}|More]) when M+N=<16 ->
 peep_hole([I|More]) ->
     [I|peep_hole(More)];
 peep_hole([]) ->
+    [].
+
+%% Peep-hole optimization on reversed instructions lists.
+
+peep_hole_backwards(Code) ->
+    NewCode = peep_hole_backwards1(Code),
+    if Code==NewCode -> Code;
+       true          -> peep_hole_backwards(NewCode)
+    end.
+
+peep_hole_backwards1(['ADD',0,'PUSH1'|Code]) ->
+    peep_hole_backwards1(Code);
+peep_hole_backwards1(['POP',UnOp|Code]) when UnOp=='MLOAD';UnOp=='ISZERO';UnOp=='NOT' ->
+    peep_hole_backwards1(['POP'|Code]);
+peep_hole_backwards1(['POP',BinOp|Code]) when
+    %% TODO: more binary operators
+    BinOp=='ADD';BinOp=='SUB';BinOp=='MUL';BinOp=='SDIV' ->
+    peep_hole_backwards1(['POP','POP'|Code]);
+peep_hole_backwards1(['POP',_,'PUSH1'|Code]) ->
+    peep_hole_backwards1(Code);
+peep_hole_backwards1([I|Code]) ->
+    [I|peep_hole_backwards1(Code)];
+peep_hole_backwards1([]) ->
     [].
 
 %% Jump optimization:
