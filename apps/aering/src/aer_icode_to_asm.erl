@@ -131,10 +131,32 @@ assemble_expr(Funs,Stack,{binop,Op,A,B}) ->
 assemble_expr(Funs,Stack,{funcall,Fun,Args}) ->
     %% TODO: tail-call optimization!
     Return = make_ref(),
-    [{push_label,Return},
-     assemble_exprs(Funs,[return_address|Stack],Args++[Fun]),
-     'JUMP',
-     {'JUMPDEST',Return}];
+    %% This is the obvious code:
+    %%   [{push_label,Return},
+    %%    assemble_exprs(Funs,[return_address|Stack],Args++[Fun]),
+    %%    'JUMP',
+    %%    {'JUMPDEST',Return}];
+    %% Its problem is that it stores the return address on the stack
+    %% while the arguments are computed, which is unnecessary. To
+    %% avoid that, we compute the last argument FIRST, and replace it
+    %% with the return address using a SWAP.
+    case Args of
+	[] ->
+	    [{push_label,Return},
+	     assemble_expr(Funs,[return_address|Stack],Fun),
+	     'JUMP',
+	     {'JUMPDEST',Return}];
+	_ ->
+	    {Init,[Last]} = lists:split(length(Args)-1,Args),
+	    [assemble_exprs(Funs,Stack,[Last|Init]),
+	     %% Put the return address in the right place, which also
+	     %% reorders the args correctly.
+	     {push_label,Return},
+	     swap(length(Args)),
+	     assemble_expr(Funs,[dummy || _ <- Args]++[return_address|Stack],Fun),
+	     'JUMP',
+	     {'JUMPDEST',Return}]
+    end;	     
 assemble_expr(Funs,Stack,{ifte,Decision,Then,Else}) ->
     %% This compilation scheme introduces a lot of labels and
     %% jumps. Unnecessary ones are removed later in
