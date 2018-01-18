@@ -6,13 +6,38 @@ contract type Identity = {
 };
 
 contract Identity = {
+  type pair('a) = ('a,'a);
+
   let main(x:int) = {
-    //double(double(x));
-    //2*x + 1;
-    fac(6);
+    switch(rev([1,2,3])) {
+    | h::t => h;
+    };
     //if (x==42) 1 else (x*x);
   };
-  let fac(n:int) = {
-    if (n==0) 1 else (n*fac(n-1));
-  };
+  //let foo(a,b,c) = c;
+  let lentr(l) = lent(0,l);
+  let len(l) =
+    switch(l) {
+     | [] => 0;
+     | x::xs => 1+len(xs);
+     };
+  let lent(n,l) =
+    switch (l) {
+    | [] => n;
+    | (x::xs) => lent(n+1,xs);
+    };
+  let app(a:int,b:int) =
+     switch(a) {
+     | [] => b;
+     | (x::xs) => x::app(xs,b);
+     };
+  let rev(l) = revt(l,[]);
+  let revt(l,r) =
+    switch(l) {
+    | [] => r;
+    | x::xs => revt(xs,x::r);
+    };
+  //let fac(n:int) = {
+  //  if (n==0) 1 else (n*fac(n-1));
+  //};
 };
