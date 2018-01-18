@@ -69,9 +69,37 @@ assemble_expr(Funs,Stack,{var_ref,Id}) ->
 assemble_expr(_Funs,_Stack,{integer,N}) ->
     push(N);
 assemble_expr(Funs,Stack,{tuple,Cpts}) ->
-    [assemble_exprs(Funs,Stack,Cpts),
-     aeb_opcodes:mnemonic(?MSIZE),
-     write_words(length(Cpts))];
+    %% We build tuples right-to-left, so that the first write to the
+    %% tuple extends the memory size. Because we use ?MSIZE as the
+    %% heap pointer, we must allocate the tuple AFTER computing the
+    %% first element.
+    %% We store elements into the tuple as soon as possible, to avoid
+    %% keeping them for a long time on the stack.
+    case lists:reverse(Cpts) of
+	[] ->
+	    %% It doesn't matter what the address of the empty tuple is.
+	    push(0);
+	[Last|Rest] ->
+	    [assemble_expr(Funs,Stack,Last),
+	     %% allocate the tuple memory
+	     aeb_opcodes:mnemonic(?MSIZE),
+	     %% compute address of last word
+	     push(32*(length(Cpts)-1)), aeb_opcodes:mnemonic(?ADD),
+	     %% Stack: <last-value> <pointer>
+	     %% Write value to memory (allocates the tuple)
+	     swap(1), dup(2), aeb_opcodes:mnemonic(?MSTORE),
+	     %% Stack: pointer to last word written
+	     [[%% Update pointer to next word to be written
+	       push(32), swap(1), aeb_opcodes:mnemonic(?SUB),
+	       %% Compute element
+	       assemble_expr(Funs,[pointer|Stack],A),
+	       %% Write element to memory
+	       dup(2), aeb_opcodes:mnemonic(?MSTORE)]
+	       %% And we leave a pointer to the last word written on
+	       %% the stack
+	      || A <- Rest]]
+	    %% The pointer to the entire tuple is on the stack
+    end;
 assemble_expr(_Funs,_Stack,{list,[]}) ->
     %% Use Erik's value of -1 for []
     [push(0), aeb_opcodes:mnemonic(?NOT)];
