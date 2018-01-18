@@ -280,7 +280,26 @@ assemble_pattern(Succeed,Fail,{tuple,[A|B]}) ->
 	      [{'JUMPDEST',PopNFail},pop(length(AVars)-1),
 	       {'JUMPDEST',Pop1Fail},pop(1),
 	       {push_label,Fail},'JUMP']
-      end]}.
+      end]};
+assemble_pattern(Succeed,Fail,{list,[]}) ->
+    %% [] is represented by -1.
+    {[],[push(1),
+	 aeb_opcodes:mnemonic(?ADD),
+	 {push_label,Fail},
+	 aeb_opcodes:mnemonic(?JUMPI),
+	 {push_label,Succeed},
+	 'JUMP']};
+assemble_pattern(Succeed,Fail,{list,[A|B]}) ->
+    assemble_pattern(Succeed,Fail,{binop,'::',A,{list,B}});
+assemble_pattern(Succeed,Fail,{binop,'::',A,B}) ->
+    %% Make sure it's not [], then match as tuple.
+    NotNil = make_ref(),
+    {Vars,Code} = assemble_pattern(Succeed,Fail,{tuple,[A,B]}),
+    {Vars,[dup(1),push(1),aeb_opcodes:mnemonic(?ADD),
+	   {push_label,NotNil},aeb_opcodes:mnemonic(?JUMPI),
+	   {push_label,Fail},'JUMP',
+	   {'JUMPDEST',NotNil},
+	   Code]}.
 
 %% When Vars are on the stack, with a value we want to discard
 %% below them, then we swap the top variable with that value and pop.
