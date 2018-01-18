@@ -171,11 +171,6 @@ assemble_expr(Funs,Stack,tail,{funcall,Fun,Args}) ->
     %% Copy arguments back down the stack to the start of the frame
     ShuffleSpec = lists:seq(length(Args)+(1-length(Suffix)),1,-1)++[discard || _ <- Stack],
     Shuffle = shuffle_stack(ShuffleSpec),
-    io:format("Tail-call: shuffling ~p\n"
-	      "                with ~p\n"
-	      "              to get ~p\n",
-	      [lists:reverse([function||Suffix==[]]++[{arg,I}||I<-lists:seq(length(Args),1,-1)]++Stack),
-	       Shuffle,ShuffleSpec]),
     [Prefix,Shuffle,Suffix,'JUMP'];
 assemble_expr(Funs,Stack,Tail,{ifte,Decision,Then,Else}) ->
     %% This compilation scheme introduces a lot of labels and
@@ -285,7 +280,7 @@ assemble_pattern(Succeed,Fail,{integer,N}) ->
 assemble_pattern(Succeed,_Fail,{var_ref,"_"}) ->
     {[],[aeb_opcodes:mnemonic(?POP),{push_label,Succeed},'JUMP']};
 assemble_pattern(Succeed,_Fail,{var_ref,Id}) ->
-    {[{Id,dummy_type}],
+    {[{Id,"_"}],
      [{push_label,Succeed},'JUMP']};
 assemble_pattern(Succeed,_Fail,{tuple,[]}) ->
     {[],
