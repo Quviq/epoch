@@ -50,8 +50,7 @@ assemble_function(Funs,Name,Args,Body) ->
     [{aeb_opcodes:mnemonic(?JUMPDEST),lookup_fun(Funs,Name,length(Args))},
      assemble_expr(Funs, lists:reverse(Args), Body),
      %% swap return value and first argument
-     [swap(length(Args)) || Args/=[]],
-     [aeb_opcodes:mnemonic(?POP) || _ <- Args],
+     pop_args(length(Args)),
      swap(1),
      aeb_opcodes:mnemonic(?JUMP)].
 
@@ -183,10 +182,12 @@ assemble_cases(Funs,Stack,Close,[{Pattern,Body}|Cases]) ->
      case NewVars of
 	 [] ->
 	     pop(1);
+	 [_] ->
+	     %% Special case for peep-hole optimization
+	     pop_args(1);
 	 _ ->
 	     [swap(length(NewVars)), pop(1)]
      end,
-     [[] || io:format("Assembling ~p with stack ~p\n",[Body,reorder_vars(NewVars)++Stack])/=ok],
      assemble_expr(Funs,reorder_vars(NewVars)++Stack,Body),
      pop_args(length(NewVars)),
      {push_label,Close},
@@ -314,10 +315,13 @@ push(N) ->
      binary_to_list(Bytes)].
 
 %% Pop N values from UNDER the top element of the stack.
-%% TODO: make this a pseudo-instruction so peephole optimization can
+%% This is a pseudo-instruction so peephole optimization can
 %% combine pop_args(M), pop_args(N) to pop_args(M+N)
+pop_args(0) ->
+    [];
 pop_args(N) ->
-    [swap(N),pop(N)].
+    {pop_args,N}.
+%%    [swap(N),pop(N)].
 
 pop(N) ->
     [aeb_opcodes:mnemonic(?POP) || _ <- lists:seq(1,N)].
@@ -368,6 +372,8 @@ define_labels(Addr,[{'JUMPDEST',Lab}|More]) ->
     [{Lab,Addr}|define_labels(Addr+1,More)];
 define_labels(Addr,[{push_label,_}|More]) ->
     define_labels(Addr+4,More);
+define_labels(Addr,[{pop_args,N}|More]) ->
+    define_labels(Addr+N+1,More);
 define_labels(Addr,[_|More]) ->
     define_labels(Addr+1,More);
 define_labels(_,[]) ->
@@ -383,6 +389,8 @@ use_labels(Labels,{push_label,Ref}) ->
 	    [aeb_opcodes:mnemonic(?PUSH3),
 	     Addr div 65536,(Addr div 256) rem 256, Addr rem 256]
     end;
+use_labels(_,{pop_args,N}) ->
+    [swap(N),pop(N)];
 use_labels(_,I) ->
     I.
 
@@ -394,6 +402,8 @@ peep_hole(['PUSH1',0,{push_label,_},'JUMP1'|More]) ->
     peep_hole(More);
 peep_hole(['PUSH1',1,{push_label,Lab},'JUMP1'|More]) ->
     [{push_label,Lab},'JUMP'|peep_hole(More)];
+peep_hole([{pop_args,M},{pop_args,N}|More]) when M+N=<16 ->
+    peep_hole([{pop_args,M+N}|More]);
 peep_hole([I|More]) ->
     [I|peep_hole(More)];
 peep_hole([]) ->
