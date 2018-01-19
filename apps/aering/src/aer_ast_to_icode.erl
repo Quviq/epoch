@@ -14,9 +14,12 @@
 -include("aer_icode.hrl").
 
 convert(Tree, Options) ->
-    code(Tree,  #{ functions => []
-                 , env => []
-                 , options => Options}).
+%% Add this line to turn on the type-checker:
+%%    code(aer_ast_infer_types:infer(Tree),
+    code(Tree,
+	 #{ functions => []
+	  , env => []
+	  , options => Options}).
 
 code([{contract_type,_Attribs, {con, _, Name}, _TypeDecls}|Rest], Icode) ->
     %% TODO: Handle types for future type check.
@@ -53,15 +56,20 @@ contract_to_icode(Code, Icode) ->
 ast_id({id, _, Id}) -> Id.
 
 ast_args([{arg, _, Name, Type}|Rest], Acc) ->
-    ast_args(Rest, [{ast_id(Name), ast_id(Type)}| Acc]);
+    ast_args(Rest, [{ast_id(Name), ast_type(Type)}| Acc]);
 ast_args([], Acc) -> lists:reverse(Acc).
-                                 
+
+%% ICode is untyped, surely?
+ast_type(T) ->
+    T.                                 
 
 ast_body({id, _, Name}) ->
     %% TODO Look up id in env
     #var_ref{name = Name};
 ast_body({int, _, Value}) ->
     #integer{value = Value};
+ast_body({typed, _, Body, _}) ->
+    ast_body(Body);
 ast_body({tuple,_,Args}) ->
     #tuple{cpts = [ast_body(A) || A <- Args]};
 ast_body({list,_,Args}) ->
