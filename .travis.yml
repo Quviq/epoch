@@ -72,6 +72,7 @@ matrix:
 env:
   - JOB=test
   - JOB=eunit
+  - JOB=doc
   - JOB=dialyzer
   - JOB=package
 cache:

@@ -45,6 +45,9 @@ case "${1:?}"-"${2:?}" in
     script-dialyzer)
         make dialyzer
         ;;
+    script-doc)
+        ./rebar3 edoc
+        ;;
     script-package)
         make prod-package
         mv "${BuiltPackagePath:?}" "${FinalPackagePath:?}"
