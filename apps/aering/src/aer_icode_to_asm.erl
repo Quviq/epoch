@@ -66,6 +66,9 @@ assemble_expr(Funs,Stack,_TailPosition,{var_ref,Id}) ->
 		    error({undefined_name,Id})
 	    end
     end;
+assemble_expr(_,_,_,{missing_field,Format,Args}) ->
+    io:format(Format,Args),
+    error(missing_field);
 assemble_expr(_Funs,_Stack,_,{integer,N}) ->
     push(N);
 assemble_expr(Funs,Stack,_,{tuple,Cpts}) ->
@@ -282,6 +285,9 @@ assemble_pattern(Succeed,Fail,{integer,N}) ->
 	 'JUMP']};
 assemble_pattern(Succeed,_Fail,{var_ref,"_"}) ->
     {[],[aeb_opcodes:mnemonic(?POP),{push_label,Succeed},'JUMP']};
+assemble_pattern(Succeed,Fail,{missing_field,_,_}) ->
+    %% Missing record fields are quite ok in patterns.
+    assemble_pattern(Succeed,Fail,{var_ref,"_"});
 assemble_pattern(Succeed,_Fail,{var_ref,Id}) ->
     {[{Id,"_"}],
      [{push_label,Succeed},'JUMP']};
@@ -407,7 +413,7 @@ lookup_fun(Funs,Name,Arity) ->
 	    error({undefined_function,Name,Arity})
     end.
 
-is_top_level_fun(Funs,Stack,{var_ref,Id}) ->
+is_top_level_fun(_Funs,Stack,{var_ref,Id}) ->
     not lists:keymember(Id,1,Stack);
 is_top_level_fun(_,_,_) ->
     false.
