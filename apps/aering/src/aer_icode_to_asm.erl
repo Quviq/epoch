@@ -25,15 +25,20 @@ convert(#{ contract_name := _ContractName
     %% taken from the stack
     StopLabel = make_ref(),
     MainFunction = lookup_fun(Funs,"main",1),
-    DummyCode = [%% push a return address to stop
-		 {push_label,StopLabel},
-		 %% swap argument to the top of the stack
-		 aeb_opcodes:mnemonic(?SWAP1),
-		 {push_label,MainFunction},
-		 aeb_opcodes:mnemonic(?JUMP),
-		 {aeb_opcodes:mnemonic(?JUMPDEST),StopLabel},
-		 aeb_opcodes:mnemonic(?STOP)
-		],
+    DispatchCode = [%% read all call data into memory at address zero
+		    aeb_opcodes:mnemonic(?CALLDATASIZE),
+		    push(0),
+		    dup(1),
+		    aeb_opcodes:mnemonic(?CALLDATACOPY),
+		    %% push a return address to stop
+		    {push_label,StopLabel},
+		    %% push address of call data
+		    push(0),
+		    {push_label,MainFunction},
+		    aeb_opcodes:mnemonic(?JUMP),
+		    {aeb_opcodes:mnemonic(?JUMPDEST),StopLabel},
+		    aeb_opcodes:mnemonic(?STOP)
+		   ],
    
     %% Code is a deep list of instructions, containing labels and
     %% references to them. Labels take the form {'JUMPDEST',Ref}, and
@@ -43,7 +48,7 @@ convert(#{ contract_name := _ContractName
 	    || {Name,Args,Body} <- Functions],
     resolve_references(
         [%% aeb_opcodes:mnemonic(?COMMENT), "CONTRACT: " ++ ContractName,
-	 DummyCode,
+	 DispatchCode,
 	 Code]).
 
 assemble_function(Funs,Name,Args,Body) ->
