@@ -126,8 +126,9 @@ fetch_mempool(Uri) ->
 schedule_ping(Uri) ->
     gen_server:cast(?MODULE, {schedule_ping, Uri}).
 
+%% Check whether this header is better than previous best
 new_header(Uri, Header, AgreedHeight) ->
-  gen_server:cast(?MODULE, {new_header, Uri, Header, AgreedHeight}).
+  gen_server:call(?MODULE, {new_header, Uri, Header, AgreedHeight}).
 
 %%%=============================================================================
 %%% gen_server functions
@@ -167,15 +168,28 @@ init([]) ->
     %% When we start the top_header may still be unknown... it takes some time to build the chain.
     {ok, #state{}}.
 
+handle_call({new_header, Uri, Header, AgreedHeight}, State) ->
+    case State#state.best of
+      {BestHeader, _BestUri} -> 
+          case aec_headers:difficulty(Header) > aec_headers:difficulty(BestHeader) of
+              true ->
+                  lager:debug("Received a header with higher difficulty ~p", [Header]),
+                  {reply, true, State#state{best = {Header, Uri}, agreed_on_height = AgreedHeight}};
+              false ->
+                  {repy, false, State}
+          end;
+      undefined ->
+          {reply, true, State#state{best = {Header, Uri}, agreed_on_height = AgreedHeight}}
+    end;
 handle_call(_, _From, State) ->
     {reply, error, State}.
 
 handle_cast({connect, Uri}, State) ->
     aec_peers:add(Uri, _Connect = true),
     {noreply, State};
-handle_cast({start_sync, Uri, RemoteHash, _RemoteDifficulty}, State) ->
+handle_cast({start_sync, Uri, RemoteHash, RemoteDifficulty}, State) ->
     %% We could decide not to sync if we are already syncing, but that
-    %% opens up for an attac in which someone fakes to have higher difficulty
+    %% opens up for an attack in which someone fakes to have higher difficulty
     jobs:enqueue(sync_jobs, {start_sync, Uri, RemoteHash}),
     {noreply, State};
 handle_cast({server_get_missing, Uri}, State) ->
@@ -187,19 +201,6 @@ handle_cast({fetch_mempool, Uri}, State) ->
 handle_cast({schedule_ping, Uri}, State) ->
     jobs:enqueue(sync_jobs, {ping, Uri}),
     {noreply, State};
-handle_cast({new_header, Uri, Header, AgreedHeight}, State) ->
-    case State#state.best of
-      {BestHeader, _BestUri} -> 
-          case aec_headers:difficulty(Header) > aec_headers:difficulty(BestHeader) of
-              true ->
-                  lager:debug("Received a header with higher difficulty ~p", [Header]),
-                  {noreply, State#state{best = {Header, Uri}, agreed_on_height = AgreedHeight}};
-              false ->
-                  {norepy, State}
-          end;
-      undefined ->
-          {noreply, State#state{best = {Header, Uri}, agreed_on_height = AgreedHeight}}
-    end;
 handle_cast(_, State) ->
     {noreply, State}.
 
@@ -334,7 +335,7 @@ do_start_sync(Uri, RemoteHash) ->
             %% The prev_hash of next block should be hash_header of block it builds upon
             {ok, LocalStart} = aec_chain:get_header_by_height(AgreedHeight),
             {ok, LocalStartHash} = aec_headers:hash_header(LocalStart),
-            new_header(Uri, Hdr, AgreedHeight),
+            Better = new_header(Uri, Hdr, AgreedHeight),
             lager:debug("Agreed upon height (~p): ~p", [Uri, AgreedHeight]),
             fetch_chain(Uri, AgreedHeight, RemoteHeight, LocalStartHash);
         {error, Reason} ->
