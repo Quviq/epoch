@@ -387,27 +387,25 @@ do_server_get_missing(Uri) ->
 fetch_chain(Uri, FromHeight, ToHeight, _Hash) when FromHeight == ToHeight ->
     aec_events:publish(chain_sync, {client_done, Uri});
 fetch_chain(Uri, FromH, ToH, HashFromH) when FromH < ToH ->
-    %% We could opt for getting the header first and check that it fits on chain
-    %% but then we need in 2 requests the most common case 
-    case aeu_requests:get_block_by_height(Uri, FromH + 1) of
-        {ok, Block} ->
-             Header = aec_blocks:to_header(Block),
-             PrevHash = aec_blocks:prev_hash(Block),
-             lager:debug("New block fetched (~p): ~p", [Uri, pp(Header)]),        
-             case {PrevHash == HashFromH, aec_headers:hash_header(Header)} of
-                 {true, {ok, NewHash}} -> 
-                     %% This header extends the chain
-                     lager:debug("Calling post_block(~p)", [pp(Block)]),
-                     case aec_conductor:add_synced_block(Block) of
-                         ok ->
-                             fetch_chain(Uri, FromH + 1, ToH, NewHash);  
-                         {error, _} = Error ->
-                             Error
-                     end;
-                 _ ->
-                     lager:info("Abort sync due to non-fitting block ~p =/= ", [Header]),
-                     {error, header_mismatch}
-             end;
+    case aeu_requests:get_header_by_height(Uri, FromH + 1) of
+        {ok, Header} ->
+          lager:debug("Header fetched (~p): ~p", [Uri, pp(Header)]),
+          case do_fetch_block(aec_headers:hash_header(Header), Uri) of
+            {ok, true, Block} ->
+              lager:debug("Calling post_block(~p)", [pp(Block)]),
+              case aec_conductor:add_synced_block(Block) of
+                ok ->
+                  fetch_chain(Uri, FromH + 1, ToH, NewHash);  
+                {error, _} = Error ->
+                  Error
+              end;
+            {ok, false, _} ->
+              %% More than one sync in progress, the block is already there
+              fetch_chain(Uri, FromH + 1, ToH, NewHash);
+            {error, _} = Error ->
+              lager:info("Abort sync due to non-fitting block ~p =/= ", [Header]),
+              Error
+          end;
       {error, Reason} ->
           {error, Reason}
     end.
