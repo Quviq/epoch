@@ -1,0 +1,48 @@
+// A simple lottery contract
+include "List.aes"
+
+contract Lottery =
+
+  record state = { participants : list(address),
+                   price_sum : int,
+                   close_height : int}
+
+  entrypoint init() : state =
+    {participants = [],
+     price_sum = 0,
+     close_height = 0 }
+
+  stateful entrypoint start(n : int) =
+    require( Call.caller == Contract.creator, "not creator")
+    require( state.price_sum == 0, "lottery ongoing")
+    require( n > 1, "block in future")
+    put(state{ participants = [],
+               close_height = Chain.block_height + n })
+
+  stateful payable entrypoint buy() =
+    require( state.close_height > Chain.block_height, "lottery closed")
+    require( Call.value == 10, "price ticket 10")
+    put(state{ participants = Call.caller :: state.participants,
+               price_sum = state.price_sum + 8 })  // we take 20%
+    state.close_height
+
+  stateful entrypoint claim() : option(address) =
+    require( Chain.block_height > state.close_height, "result not yet known")   // fixed in 6.0.0
+    require( state.price_sum > 0, "no ongoing lottery")
+
+    // Winner is determined by hash of key block of closing height
+    switch(Chain.block_hash(state.close_height))
+        None => None
+        Some(h) =>
+           let winner = Bytes.to_int(h) mod List.length(state.participants)
+           let winner_account = List.get(winner, state.participants)
+           // Spend to winner
+           Chain.spend(winner_account, state.price_sum)
+           put(state{ price_sum = 0 })
+           Some(winner_account)
+
+  entrypoint get_state() =
+    state
+
+  entrypoint participants() =
+    state.participants
