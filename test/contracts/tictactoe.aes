@@ -5,12 +5,14 @@ contract TicTacToe =
 
   record state = { player : address,
                    price_sum : int,
+                   deadline : int,
                    next : address,   // first one doign a move starts, agreed in channel (otherwise not signed)
                    board : map(int * int, option(address)) }
 
   entrypoint init() : state =
     { player = Contract.creator,
       price_sum = Contract.balance,
+      deadline = 0,
       next = Contract.creator,
       board = {[(0,0)] = None, [(0,1)] = None, [(0,2)] = None,
                [(1,0)] = None, [(1,1)] = None, [(1,2)] = None,
@@ -25,22 +27,30 @@ contract TicTacToe =
     switch(start)
         true =>
            put( state{ player = Call.caller,
+                       deadline = Chain.block_height + 2,
                        price_sum = state.price_sum + Call.value } )
         false =>
            put( state{ next = Call.caller,
+                       deadline = Chain.block_height + 3,  // one extra block if other party starts
                        price_sum = state.price_sum + Call.value } )
 
   stateful entrypoint move(row : int, column : int) =
     require( state.player != state.next, "only one player")
-    require( state.player == Call.caller, "not your turn")
+    require( state.player == Call.caller || state.deadline < Chain.block_height, "not your turn")
     require( state.price_sum > 0, "no price")
     require( 0 =< row && row =< 3, "only 3 rows")
     require( 0 =< column && column =< 3, "only 3 columns")
-    require( state.board[(row, column)] == None, "already taken")
-    put(state{ next = state.player,
-               player = state.next,
-               board = state.board{[(row, column)] = Some(Call.caller)} })
-    switch(check_winning())
+    if(state.deadline < Chain.block_height)
+       Chain.spend(state.next, state.price_sum)
+       put(state{ price_sum = 0 })
+       true
+    else
+      require( state.board[(row, column)] == None, "already taken")
+      put(state{ next = state.player,
+                 player = state.next,
+                 deadline = Chain.block_height + 2,
+                 board = state.board{[(row, column)] = Some(Call.caller)} })
+      switch(check_winning())
         None => false
         Some(winner) =>
            Chain.spend(winner, state.price_sum)
