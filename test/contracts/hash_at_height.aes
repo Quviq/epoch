@@ -1,0 +1,4 @@
+contract HashAtHeight =
+
+  entrypoint my_hash() =
+    Chain.block_hash(Chain.block_height)
