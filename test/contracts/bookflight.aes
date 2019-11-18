@@ -1,0 +1,24 @@
+contract BookMeAFlight =
+
+
+  type date = int * int * int
+  record flight = { from : string,
+                    to : string,
+                    date : date }
+
+  record state = { flight : option(flight),
+                   query  : option(oracle_query(string * string,  date * string * string)) }
+
+  entrypoint init() : state =
+    { flight = None,
+      query  = None }
+
+  stateful payable entrypoint book_for_me(flight : flight) =
+    require( state.flight == None && state.query == None, "ongoing booking")
+    put(state{flight = Some(flight)})
+
+  entrypoint get_state() =
+    state
+
+  stateful entrypoint booked_for_you(ticket : int) =
+    ticket
