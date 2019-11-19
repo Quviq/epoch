@@ -1,0 +1,55 @@
+// Lottery with an external trusted party
+include "List.aes"
+
+contract ChainTest =
+
+  record state = { participants : list(address),
+                   price_sum : int(),
+                   close_height : int(),
+                   oracle : oracle(int, int),
+                   query : option(oracle_query(int, int))  }
+
+  entrypoint init(delphi : oracle(int, int)) : state =
+    { participants = [],
+      price_sum = 0,
+      close_height = 0,
+      oracle = delphi,
+      query = None }
+
+  // put in enough to pay  for oracle query
+  stateful payable entrypoint start(n : int) =
+    require( Call.caller == Contract.creator, "not creator" )
+    require( state.price_sum == 0, "lottery ongoing" )
+    require( n > 1, "block in future")
+    put(state{ participants = [],
+               close_height = Chain.block_height + n })
+
+  stateful payable entrypoint buy() =
+    require( state.close_height > Chain.block_height, "lottery closed" )
+    require( Call.value == 10, "price ticket 10" )
+    put(state{ participants = Call.caller :: state.participants,
+               price_sum = state.price_sum + 8 })  // we take 20%
+
+  stateful entrypoint draw() =
+     require( Chain.block_height > state.close_height, "result not yet known" )
+     require( state.price_sum > 0, "no ongoing lottery" )
+     require( state.query == None, "already drawn" )
+     let q = Oracle.query(state.oracle, List.length(state.participants),
+                          Oracle.query_fee(state.oracle), RelativeTTL(5), RelativeTTL(480))
+     put(state{query = Some(q)})
+
+  stateful entrypoint claim() : option(address) =
+    switch(state.query)
+        None => abort( "no drawing" )
+        Some(query) =>
+          switch( Oracle.get_answer(state.oracle, query))
+             None => abort("waiting for query")
+             Some(winner) =>
+               let winner_account = List.get(winner, state.participants)
+               // Spend to winner
+               Chain.spend(winner_account, state.price_sum)
+               put(state{ price_sum = 0, query = None })
+               Some(winner_account)
+
+  entrypoint get_state() =
+    state
