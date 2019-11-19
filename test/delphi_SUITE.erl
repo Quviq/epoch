@@ -98,9 +98,14 @@ lottery_test(Cfg) ->
     ?assertReturn(VM, Call11, {revert, <<"lottery closed">>}),
 
     {Trees12, Env12, [#{return := {oracle_query, Query}}]} = call_contract(Trees10, Env10, LotteryCallTx#{sender => 4, function => "draw", args => []}),
+    DelphiQuery = binary_to_list(aeser_api_encoder:encode(oracle_query_id, Query)),
 
-    {Trees13, Env13, [Call13]} = call_contract(Trees12, Env12, DelphiCallTx#{sender => 1, function => "answer", args => ["3"]}),
-    ?assertReturn(VM, Call13, ok),
+    {Trees13, Env13, [Call13]} = call_contract(Trees12, Env12, DelphiCallTx#{sender => 1, function => "answer", args => [DelphiQuery, "2"]}),
+    ?assertReturn(VM, Call13, {tuple, {}}),
+
+    {Trees14, Env14, [Call14]} = call_contract(Trees13, Env13, LotteryCallTx#{sender => 3, function => "claim", args => []}),
+    ?assertReturn(VM, Call134 {variant, [0,1], 1,
+                                {{address, <<3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0>>}}}),
 
     ok.
 

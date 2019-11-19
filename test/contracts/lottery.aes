@@ -34,7 +34,7 @@ contract ChainTest =
      require( Chain.block_height > state.close_height, "result not yet known" )
      require( state.price_sum > 0, "no ongoing lottery" )
      require( state.query == None, "already drawn" )
-     let q = Oracle.query(state.oracle, List.length(state.participants),
+     let q = Oracle.query(state.oracle, List.length(state.participants) - 1,
                           Oracle.query_fee(state.oracle), RelativeTTL(5), RelativeTTL(480))
      put(state{query = Some(q)})
      q

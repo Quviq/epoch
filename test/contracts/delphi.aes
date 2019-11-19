@@ -7,6 +7,7 @@ contract Delphi =
   stateful entrypoint init() : state =
      Oracle.register(Contract.address, 50, RelativeTTL(2000))
 
+  // return between 0 and x
   stateful entrypoint answer(q : oracle_query(int, int), x : int) =
      let max = Oracle.get_question(state, q)
      require( max >= x, "x too high" )
