@@ -30,13 +30,14 @@ contract ChainTest =
     put(state{ participants = Call.caller :: state.participants,
                price_sum = state.price_sum + 8 })  // we take 20%
 
-  stateful entrypoint draw() =
+  stateful entrypoint draw() : oracle_query(int, int) =
      require( Chain.block_height > state.close_height, "result not yet known" )
      require( state.price_sum > 0, "no ongoing lottery" )
      require( state.query == None, "already drawn" )
      let q = Oracle.query(state.oracle, List.length(state.participants),
                           Oracle.query_fee(state.oracle), RelativeTTL(5), RelativeTTL(480))
      put(state{query = Some(q)})
+     q
 
   stateful entrypoint claim() : option(address) =
     switch(state.query)
