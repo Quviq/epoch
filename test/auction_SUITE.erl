@@ -2,7 +2,7 @@
 %% Running several lottery contracts
 %%
 %%
--module(delphi_SUITE).
+-module(auction_SUITE).
 
 %% common_test exports
 -export(
@@ -11,7 +11,7 @@
 
 %% test case exports
 -export(
-   [ lottery_test/1
+   [ auction_test/1
    ]).
 
 -include_lib("aecontract/include/aecontract.hrl").
@@ -27,7 +27,7 @@
         end).
 
 all() ->
-    [ lottery_test
+    [ auction_test
     ].
 
 
@@ -49,71 +49,81 @@ init_per_testcase(TC, Config) ->
 end_per_testcase(TC, Config) ->
     ok.
 
-lottery_test(Cfg) ->
+auction_test(Cfg) ->
+    Name = "tictactoe.aes",
     VM = proplists:get_value(vm, Cfg),
-    Delphi = compile("delphi.aes", VM),
-    Lottery = compile("lottery.aes", VM),
+    AEVMDA = compile("acm_dutch_auction.aes", aevm),
+    FATEDA = compile("acm_dutch_auction.aes", fate),
+
+    Compiled = compile(Name, VM),
+    Blocks = 4,
 
     {Trees, Env}   = init(),
     ct:pal("Mining init ~p", [Env]),
-    DelphiCallTx =  #{backend => VM, code => Delphi, sender => 1, contract_id => aeser_id:create(contract, id(1,1))},
-    LotteryCallTx =  #{backend => VM, code => Lottery, sender => 2, contract_id => aeser_id:create(contract, id(2,1))},
 
+    CallData = mk_calldata(#{backend => VM, code => Compiled, function => "init", args => []}),
+    {Trees1, Env1} = create_contract(Trees, Env, #{backend => VM, code => Compiled, sender => 1, amount => 10,
+                                                   call_data => CallData}),
 
-    %% Create the Delphi oracle
-    {Trees1, Env1} = create_contract(Trees, Env, #{backend => VM, code => Delphi, sender => 1, function => "init", args => []}),
+     create_contract(Trees, Env, #{backend => fate, code => FATEDA, sender => 1,
+                                   call_data =>  mk_calldata(#{backend => fate, code => FATEDA, function => "init",
+                                                               args => ["10000", "100", "oq_EmJyR97vW4jzdcCPCvgjUa8RUmo45E1KnExBum38yz48Frwov"]})}),
+     create_contract(Trees, Env, #{backend => aevm, code => AEVMDA, sender => 1,
+                                   call_data =>  mk_calldata(#{backend => aevm, code => AEVMDA, function => "init",
+                                                               args => ["10000", "100", "oq_EmJyR97vW4jzdcCPCvgjUa8RUmo45E1KnExBum38yz48Frwov"]})}),
 
-    %% Delphi now on chain, what is the address?
-    {_, _, [Call1]} = call_contract(Trees1, Env1,  DelphiCallTx#{function => "get_state", args => []}),
-    #{return := {oracle, Oracle}} = Call1,
-    DelphiAddress = binary_to_list(aeser_api_encoder:encode(oracle_pubkey, Oracle)),
-    ct:pal("Oracle = ~p", [DelphiAddress]),
+    ContractId = id(1,1),
+    CallTx =  #{backend => VM, code => Compiled, sender => 1, contract_id => aeser_id:create(contract, ContractId)},
+    ct:log("Account ~p now ~p (total cost: ~p)", [1, balance(Trees1, 1),
+                                                  balance_dec(Trees, Trees1, 1)]),
 
-    %% CallData = mk_calldata(#{backend => VM, code => Compiled, function => "init", args => []}),
-    {Trees2, Env2} = create_contract(Trees1, Env1, #{backend => VM, code => Lottery, sender => 2,
-                                                     function => "init", args => [DelphiAddress]}),
+    {Trees2, Env2, [Call2]} = call_contract(Trees1, Env1, CallTx#{sender => 2, function => "join", args => ["true"],
+                                                                  amount => 10}),
+    ?assertReturn(VM, Call2, {tuple,{1}}),
 
-    {Trees3, Env3, [Call3]} = call_contract(Trees2, Env2,  LotteryCallTx#{function => "start", amount => 50, args => ["3"]}),
-    ?assertReturn(VM, Call3, {tuple,{}}),
+    call_contract(Trees2, Env2,  CallTx#{function => "get_state", args => []}),
 
-    {Trees4, Env4, [Call4]} = call_contract(Trees3, Env3, LotteryCallTx#{sender => 3, amount => 10, function => "buy", args => []}),
-    ?assertReturn(VM, Call4, {tuple, {}}),
+    {Trees3, Env3, [Call3]} = call_contract(Trees2, Env2, CallTx#{sender => 2, function => "move", args => ["2", "2"]}),
+    ?assertReturn(VM, Call3, false),
 
-    {Trees5, Env5, [Call5]} = call_contract(Trees4, Env4, LotteryCallTx#{sender => 4, amount => 10, function => "buy", args => []}),
-    ?assertReturn(VM, Call5, {tuple, {}}),
+    call_contract(Trees3, Env3,  CallTx#{function => "get_state", args => []}),
 
-    {Trees6, Env6} = mine(1, Trees5),
+    {Trees4, Env4, [Call4]} = call_contract(Trees3, Env3, CallTx#{function => "move", args => ["1", "1"]}),
+    ?assertReturn(VM, Call4, false),
 
-    {Trees7, Env7, [Call7]} = call_contract(Trees6, Env6, LotteryCallTx#{sender => 1, amount => 10, function => "buy", args => []}),
-    ?assertReturn(VM, Call7,  {tuple, {}}),
+    call_contract(Trees4, Env4,  CallTx#{function => "get_state", args => []}),
 
-    _ = call_contract(Trees7, Env7, LotteryCallTx#{sender => 1, function => "get_state", args => []}),
+    {Trees5, Env5, [Call5]} = call_contract(Trees4, Env4, CallTx#{function => "move", args => ["1", "2"]}),
+    ?assertReturn(VM, Call5, {revert,<<"not your turn">>}),
 
-    {Trees10, Env10} = lists:foldl(fun(H, {Ts, E}) ->
-                                           mine(H, Ts) end,
-                                   {Trees7, Env7}, lists:seq(2, 6)),
-    ct:pal("Env ~p", [Env10]),
+    call_contract(Trees5, Env5,  CallTx#{function => "get_state", args => []}),
 
-    {_, _, [Call11]} = call_contract(Trees10, Env10, LotteryCallTx#{sender => 4, amount => 10, function => "buy", args => []}),
-    ?assertReturn(VM, Call11, {revert, <<"lottery closed">>}),
+    {Trees6, Env6, [Call6]} = call_contract(Trees5, Env5, CallTx#{sender => 2, function => "move", args => ["1", "2"]}),
+    ?assertReturn(VM, Call6, false),
 
-    {Trees12, Env12, [#{return := {oracle_query, Query}}]} = call_contract(Trees10, Env10, LotteryCallTx#{sender => 4, function => "draw", args => []}),
-    DelphiQuery = binary_to_list(aeser_api_encoder:encode(oracle_query_id, Query)),
+    call_contract(Trees6, Env6,  CallTx#{function => "get_state", args => []}),
 
-    {Trees13, Env13, [Call13]} = call_contract(Trees12, Env12, DelphiCallTx#{sender => 1, function => "answer", args => [DelphiQuery, "2"]}),
-    ?assertReturn(VM, Call13, {tuple, {}}),
+    {Trees7, Env7, [Call7]} = call_contract(Trees6, Env6, CallTx#{function => "move", args => ["0", "2"]}),
+    ?assertReturn(VM, Call7, false),
 
-    {Trees14, Env14, [Call14]} = call_contract(Trees13, Env13, LotteryCallTx#{sender => 3, function => "claim", args => []}),
-    ?assertReturn(VM, Call14, {variant, [0,1], 1,
-                                {{address, <<3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0>>}}}),
+    call_contract(Trees7, Env7,  CallTx#{function => "get_state", args => []}),
 
+    {Trees8, Env8, [Call8]} = call_contract(Trees7, Env7, CallTx#{sender => 2, function => "move", args => ["2", "1"]}),
+    ?assertReturn(VM, Call8, false),
+
+    call_contract(Trees8, Env8,  CallTx#{function => "get_state", args => []}),
+
+    {Trees9, Env9, [Call9]} = call_contract(Trees8, Env8, CallTx#{function => "move", args => ["2", "0"]}),
+    ?assertReturn(VM, Call9, true),
+
+    call_contract(Trees9, Env9,  CallTx#{function => "get_state", args => []}),
     ok.
 
 
 
 
+
 create_contract(Trees, Env, #{backend := Backend, code := Code, sender := Sender} = Map) ->
-    CallData = mk_calldata(Map),
     Account = account(Sender),
     Tx =
         maps:merge(#{owner_id => aeser_id:create(account, Account),
@@ -128,9 +138,8 @@ create_contract(Trees, Env, #{backend := Backend, code := Code, sender := Sender
                      nonce => nonce(Trees, Account),
                      deposit => 0,
                      amount => 0,
-                     code => aect_sophia:serialize(Code, aect_test_utils:latest_sophia_contract_version()),
-                     call_data => CallData
-                    }, maps:without([backend, code, sender, function, args], Map)),
+                     code => aect_sophia:serialize(Code, aect_test_utils:latest_sophia_contract_version())
+                    }, maps:without([backend, code, sender], Map)),
     {ok, AeTx} = aect_create_tx:new(Tx),
     {ok, Trees1, Env1} =  aetx:process(AeTx, Trees, Env),
 
@@ -164,24 +173,6 @@ call_contract(Trees, Env, #{backend := Backend, sender := Sender, function := Fu
     ct:pal("~p call ~p ~p ~p", [Backend, Fun, Args, NewCalls]),
 
     {Trees2, Env2, NewCalls}.
-
-register_oracle(Trees, Env, #{sender := Sender} = Map) ->
-    Account = account(Sender),
-    Tx = maps:merge(#{ account_id      => aeser_id:create(account, Account)
-                     , oracle_ttl      => {delta, 100}
-                     , fee             => 50000 * 1000000 * 20
-                     , nonce           => nonce(Trees, Account)
-                     , query_fee       => 5
-                     , query_format    => <<"string()">>
-                     , response_format => <<"boolean()">>
-                     , ttl             => 0
-                     , abi_version     => 1
-                     }, maps:without([sender], Map)),
-    {ok, AeTx} = aeo_register_tx:new(Tx),
-    ct:pal("AeTx = ~p", [AeTx]),
-    {ok, Trees2, Env2} = aetx:process(AeTx, Trees, Env).
-
-
 
 
 compile(File, VM) ->

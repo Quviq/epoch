@@ -1,0 +1,23 @@
+contract DutchAuction =
+
+  record state = { amount : int,
+                   height : int,
+                   dec    : int,
+                   sold   : bool }
+
+  entrypoint init(price, decrease) : state =
+    { amount = price,
+      height = Chain.block_height,
+      dec    = decrease,
+      sold   = false }
+
+  stateful payable entrypoint bid() =
+    require( !(state.sold), "sold")
+    let price = demanded_price()
+    require( Contract.balance >= price, "not enough tokens")
+    Chain.spend(Contract.creator, price)
+    Chain.spend(Call.origin, Contract.balance)
+    put(state{sold = true})
+
+  function demanded_price() : int =
+    state.amount - (Chain.block_height - state.height) * state.dec

@@ -9,11 +9,11 @@ contract ChainTest =
                    oracle : oracle(int, int),
                    query : option(oracle_query(int, int))  }
 
-  entrypoint init(delphi : oracle(int, int)) : state =
+  entrypoint init(rand : oracle(int, int)) : state =
     { participants = [],
       price_sum = 0,
       close_height = 0,
-      oracle = delphi,
+      oracle = rand,
       query = None }
 
   // put in enough to pay  for oracle query
@@ -34,8 +34,10 @@ contract ChainTest =
      require( Chain.block_height > state.close_height, "result not yet known" )
      require( state.price_sum > 0, "no ongoing lottery" )
      require( state.query == None, "already drawn" )
-     let q = Oracle.query(state.oracle, List.length(state.participants) - 1,
-                          Oracle.query_fee(state.oracle), RelativeTTL(5), RelativeTTL(480))
+     let q =
+        Oracle.query(state.oracle, List.length(state.participants) - 1,
+                     Oracle.query_fee(state.oracle),
+                     RelativeTTL(5), RelativeTTL(480))
      put(state{query = Some(q)})
      q
 
