@@ -59,6 +59,11 @@ docker pull aeternity/aeternity
 docker run -p 3013:3013 -p 3015:3015 aeternity/aeternity
 ```
 
+## Swagger
+
+There is a swagger interface defined aehttp/priv/swagger.yaml <img src="http://validator.swagger.io/validator?url=https://github.com/aeternity/aeternity/blob/master/apps/aehttp/priv/swagger.yaml"></img>
+
+
 ## Additional resources
 
 * [Threat Model](https://github.com/aeternity/aetmodel/blob/master/ThreatModel.md)
